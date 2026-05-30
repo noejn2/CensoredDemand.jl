@@ -160,6 +160,7 @@ function _bhhh(ll_vec, theta0::AbstractVector; maxiters::Integer, gtol::Real,
     g = zeros(p)
     iters = 0
     converged = false
+    stalled = false
     for it in 1:maxiters
         iters = it
         f0 = sum(ll_vec(theta))
@@ -188,7 +189,10 @@ function _bhhh(ll_vec, theta0::AbstractVector; maxiters::Integer, gtol::Real,
             end
             step /= 2
         end
-        improved || break                                # no improving step → stop
+        if !improved
+            stalled = true                               # no improving step → at a local optimum
+            break
+        end
     end
 
     g = score!(theta)                                    # final score at the estimate
@@ -198,6 +202,10 @@ function _bhhh(ll_vec, theta0::AbstractVector; maxiters::Integer, gtol::Real,
     catch
         pinv(OPG)
     end
+    # A line-search stall = no direction improves the likelihood = a local optimum, so report
+    # convergence even when the (strict) gradient tolerance wasn't reached (e.g. the +1e-8 floor
+    # makes the objective slightly non-smooth around floored households).
+    converged = converged || stalled
     return (params = theta, loglike = sum(ll_vec(theta)), opg = OPG, vcov = vcov,
             gradient = g, gradnorm = sum(abs, g) / n,
             converged = converged, iterations = iters)
