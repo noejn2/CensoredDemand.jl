@@ -69,6 +69,10 @@ Wales–Woodland censored log-likelihood. Faithful port of
                     credit to households whose observed regime the params deem near-impossible
                     (orthant prob ≈ 0), masking misfit and creating a likelihood plateau (see M4 / PLAN.md).
 
+- `parallel`      : if true (default) the per-household loop is threaded with `Threads.@threads`
+                    (set the core count via `JULIA_NUM_THREADS` / `julia -t N`); if false it runs
+                    serially. Results are bit-for-bit identical either way.
+
 Returns a length-n vector of per-household log-likelihood contributions.
 """
 # Floored log for the partial-purchase regimes. `:additive_r` == R's verbatim `log(x + F)`;
@@ -80,7 +84,8 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
                           quaids::Bool = false, demographics = nothing,
                           seed::Integer = 20240530,
                           mc_points::Integer = 2000,
-                          floor_mode::Symbol = :additive_r)::Vector{Float64}
+                          floor_mode::Symbol = :additive_r,
+                          parallel::Bool = true)::Vector{Float64}
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -120,17 +125,17 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
     # FULL regime distribution (deterministic).
     mvn_full = MvNormal(zeros(m - 1), Symmetric(Sigma))
 
-    # Per-household loop. Each household's contribution is independent, so we thread it.
-    # Determinism + thread-independence: obs i uses its OWN MersenneTwister(hash((seed, i)))
-    # for the orthant-probability Monte-Carlo, so serial and parallel runs are bit-identical.
-    Threads.@threads for i in 1:n
+    # Per-household contribution. Each is independent, so the loop below runs threaded or
+    # serial (see `parallel`). Determinism + thread-independence: obs i uses its OWN
+    # MersenneTwister(hash((seed, i))) for the orthant-probability Monte-Carlo, so serial
+    # and parallel runs are bit-for-bit identical.
+    function lf_of(i)
         nui = nu[i]
 
         if nui == m
             # ----: FULL regime — all goods purchased :----
             e = S[i, 1:(m - 1)] .- U[i, 1:(m - 1)]
-            lf[i] = logpdf(mvn_full, e)
-            continue
+            return logpdf(mvn_full, e)
         end
 
         # ----: PARTIAL regimes — rearrange bought goods first :----
@@ -180,8 +185,8 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
             BB = DD * PP
             # R_c = DD*CC*RR*CC'*DD (== 1) — not needed for the 1-D CDF.
 
-            lf[i] = _flog(part2, 1e-7, floor_mode) +
-                    _flog(cdf(Normal(), -BB), 1e-7, floor_mode)
+            return _flog(part2, 1e-7, floor_mode) +
+                   _flog(cdf(Normal(), -BB), 1e-7, floor_mode)
 
         else
             # ----: all other partial regimes (nui < m-1) :----
@@ -238,7 +243,17 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
             rng_i = MersenneTwister(hash((seed, i)))   # per-obs, thread-independent
             pr = mvnormcdf(R_c, lower, upper; m = Int(mc_points), rng = rng_i)[1]
 
-            lf[i] = _flog(part2, 1e-8, floor_mode) + _flog(pr, 1e-8, floor_mode)
+            return _flog(part2, 1e-8, floor_mode) + _flog(pr, 1e-8, floor_mode)
+        end
+    end
+
+    if parallel
+        Threads.@threads for i in 1:n
+            lf[i] = lf_of(i)
+        end
+    else
+        for i in 1:n
+            lf[i] = lf_of(i)
         end
     end
 

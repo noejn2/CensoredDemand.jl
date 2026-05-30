@@ -84,6 +84,11 @@ end
         # Seeded determinism: same default seed → identical result.
         ll2 = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
         @test ll == ll2
+
+        # Parallelization toggle: the serial path is bit-identical to the threaded one.
+        ll_serial = censored_loglike(S, P, b, params; quaids = true, demographics = Z,
+                                     mc_points = 4000, parallel = false)
+        @test ll_serial == ll
     end
 
     @testset "M3 — elasticities (censored_elasticity)" begin

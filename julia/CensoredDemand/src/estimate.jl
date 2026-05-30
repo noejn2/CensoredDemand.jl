@@ -188,7 +188,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   g_tol::Real = 1e-6, x_tol::Real = 1e-8, f_tol::Real = 1e-10,
                   show_trace::Bool = false,
                   hess_h_rel::Real = 1e-4, hess_h_abs::Real = 1e-5,
-                  floor_mode::Symbol = :additive_r)
+                  floor_mode::Symbol = :additive_r,
+                  parallel::Bool = true)
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -200,7 +201,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                                        quaids = quaids,
                                        demographics = demographics,
                                        mc_points = mc_points,
-                                       floor_mode = floor_mode))
+                                       floor_mode = floor_mode,
+                                       parallel = parallel))
 
     # --- starting values ---
     theta0 = start === nothing ? _default_start(m, t; quaids = quaids) :
