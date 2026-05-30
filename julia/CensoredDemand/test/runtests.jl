@@ -213,4 +213,33 @@ end
             @test 150 < (sum(ll_default) - sum(ll_guard)) < 450
         end
     end
+
+    @testset "Initial values + start check" begin
+        td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+        scol(name) = Float64.(td[:, findfirst(==(name), h)])
+        S   = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
+        pub = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+
+        # LA-AIDS principled start (QUAIDS + demographics).
+        iv = initial_values(S, P, b; quaids = true, demographics = Z)
+        @test length(iv) == 33
+        chk = check_start(iv, S, P, b; quaids = true, demographics = Z)
+        @test chk.ok
+        @test chk.diagnostics.sigma_min_eig > 0           # Σ positive-definite
+        @test chk.diagnostics.n_loglike_nonfinite == 0    # finite likelihood at every household
+
+        # check_start rejects a malformed start.
+        @test !check_start(iv[1:30], S, P, b; quaids = true, demographics = Z).ok
+
+        # The principled start already beats the published "MLE" on the likelihood
+        # (independent confirmation that the published params are NOT the argmax).
+        ll_iv  = sum(censored_loglike(S, P, b, iv;  quaids = true, demographics = Z, mc_points = 2000))
+        ll_pub = sum(censored_loglike(S, P, b, pub; quaids = true, demographics = Z, mc_points = 2000))
+        @test ll_iv > ll_pub
+
+        # AIDS, no-demographics mode also yields a valid start.
+        iv2 = initial_values(S, P, b; quaids = false, demographics = nothing)
+        @test length(iv2) == 18
+        @test check_start(iv2, S, P, b; quaids = false, demographics = nothing).ok
+    end
 end

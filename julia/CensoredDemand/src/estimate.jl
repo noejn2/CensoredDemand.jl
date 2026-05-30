@@ -189,7 +189,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   show_trace::Bool = false,
                   hess_h_rel::Real = 1e-4, hess_h_abs::Real = 1e-5,
                   floor_mode::Symbol = :additive_r,
-                  parallel::Bool = true)
+                  parallel::Bool = true,
+                  check::Bool = true)
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -205,8 +206,15 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                                        parallel = parallel))
 
     # --- starting values ---
-    theta0 = start === nothing ? _default_start(m, t; quaids = quaids) :
-                                 collect(float.(start))
+    # Default to a principled LA-AIDS start; verify any start is viable before optimizing.
+    theta0 = start === nothing ?
+             initial_values(shares, P, budget; quaids = quaids, demographics = demographics) :
+             collect(float.(start))
+    start_check = check_start(theta0, shares, P, budget;
+                              quaids = quaids, demographics = demographics)
+    if check && !start_check.ok
+        @warn "estimate: starting values may be inappropriate" issues = start_check.issues
+    end
 
     # --- optimize ---
     # Use the current (non-deprecated) Optim.Options keyword names.
@@ -250,5 +258,6 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
             iterations  = Optim.iterations(result),
             nll         = nll_min,
             optimizer   = optimizer,
+            start_check = start_check,
             result      = result)
 end

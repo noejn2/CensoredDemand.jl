@@ -19,7 +19,8 @@ using CSV
 using DataFrames
 using JSON3
 
-export aids_shares, censored_loglike, censored_elasticity, estimate, run_job
+export aids_shares, censored_loglike, censored_elasticity, estimate, run_job,
+       initial_values, check_start
 
 # ---- M1: AIDS/QUAIDS share equations ----
 # Faithful port of censoredAIDS::aidsCalculate. Validated to ~1e-16 vs R across
@@ -41,6 +42,9 @@ include("loglike.jl")
 # mapping over draws, numerical price/income derivatives, delta-method SEs.
 # Supports an `epsilons` kwarg to inject draws for near-deterministic validation.
 include("elasticities.jl")
+
+# ---- Starting values: principled LA-AIDS start + appropriateness check ----
+include("start.jl")
 
 # ---- M3: maximum-likelihood estimation driver ----
 # Maximizes the summed censored log-likelihood (Optim.jl); vcov from a numerical
