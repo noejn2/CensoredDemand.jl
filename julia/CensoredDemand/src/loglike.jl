@@ -44,7 +44,7 @@ end
 
 """
     censored_loglike(shares, prices, budget, params; quaids=false, demographics=nothing,
-                     rng=Random.MersenneTwister(20240530), mc_points=2000) -> Vector{Float64}
+                     seed=20240530, mc_points=2000, floor_mode=:additive_r) -> Vector{Float64}
 
 Wales–Woodland censored log-likelihood. Faithful port of
 `censoredAIDS::censoredaidsLoglike`.
@@ -57,7 +57,10 @@ Wales–Woodland censored log-likelihood. Faithful port of
                     everything before is the `aids_shares` parameter vector.
 - `quaids`        : if true, include the quadratic (QUAIDS) term.
 - `demographics`  : `nothing`, or an n x t demographic matrix.
-- `rng`           : RNG for the Monte-Carlo orthant probabilities (reproducibility).
+- `seed`          : base RNG seed. Observation `i` draws its orthant-probability Monte-Carlo
+                    sample from `MersenneTwister(hash((seed, i)))`, so the result is BOTH
+                    reproducible AND independent of thread scheduling — the per-household loop is
+                    threaded (`Threads.@threads`) and serial vs parallel are bit-for-bit identical.
 - `mc_points`     : sample-point budget for `MvNormalCDF.mvnormcdf` (>= 2000).
 - `floor_mode`    : how the partial-regime log terms are floored.
                     `:additive_r` (default) reproduces the R source's additive `log(x + 1e-7/1e-8)`
@@ -75,7 +78,7 @@ _flog(x::Real, F::Real, mode::Symbol) = mode === :guard ? log(max(x, 1e-300)) : 
 function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
                           budget::AbstractVector, params::AbstractVector;
                           quaids::Bool = false, demographics = nothing,
-                          rng = Random.MersenneTwister(20240530),
+                          seed::Integer = 20240530,
                           mc_points::Integer = 2000,
                           floor_mode::Symbol = :additive_r)::Vector{Float64}
 
@@ -117,7 +120,10 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
     # FULL regime distribution (deterministic).
     mvn_full = MvNormal(zeros(m - 1), Symmetric(Sigma))
 
-    @inbounds for i in 1:n
+    # Per-household loop. Each household's contribution is independent, so we thread it.
+    # Determinism + thread-independence: obs i uses its OWN MersenneTwister(hash((seed, i)))
+    # for the orthant-probability Monte-Carlo, so serial and parallel runs are bit-identical.
+    Threads.@threads for i in 1:n
         nui = nu[i]
 
         if nui == m
@@ -229,7 +235,8 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
 
             upper = -vec(BB)
             lower = fill(-Inf, length(upper))
-            pr = mvnormcdf(R_c, lower, upper; m = Int(mc_points), rng = rng)[1]
+            rng_i = MersenneTwister(hash((seed, i)))   # per-obs, thread-independent
+            pr = mvnormcdf(R_c, lower, upper; m = Int(mc_points), rng = rng_i)[1]
 
             lf[i] = _flog(part2, 1e-8, floor_mode) + _flog(pr, 1e-8, floor_mode)
         end
