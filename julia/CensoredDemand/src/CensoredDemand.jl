@@ -20,17 +20,11 @@ using DataFrames
 
 export aids_shares, censored_loglike, censored_elasticity, estimate
 
-"""
-    aids_shares(...)
-
-Compute predicted budget shares for the demand system. Supports BOTH the linear
-AIDS (`quaids = false`) and the quadratic QUAIDS (`quaids = true`) specifications.
-
-Not yet implemented.
-"""
-function aids_shares(args...; kwargs...)
-    error("aids_shares is not yet implemented")
-end
+# ---- M1: AIDS/QUAIDS share equations ----
+# Faithful port of censoredAIDS::aidsCalculate. Validated to ~1e-16 vs R across
+# all four modes (AIDS/QUAIDS × demographics/none) by a judge-panel of two
+# independent ports plus a 12-case oracle (see test/runtests.jl).
+include("shares.jl")
 
 """
     censored_loglike(...)

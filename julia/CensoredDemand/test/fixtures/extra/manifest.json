@@ -1,0 +1,99 @@
+[
+  {
+    "name": "quaids_demos_real",
+    "quaids": true,
+    "demos": true,
+    "params_len": 27,
+    "params_csv": "test/fixtures/extra/quaids_demos_real_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_demos_real_shares.csv"
+  },
+  {
+    "name": "quaids_demos_rand1",
+    "quaids": true,
+    "demos": true,
+    "params_len": 27,
+    "params_csv": "test/fixtures/extra/quaids_demos_rand1_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_demos_rand1_shares.csv"
+  },
+  {
+    "name": "quaids_demos_rand2",
+    "quaids": true,
+    "demos": true,
+    "params_len": 27,
+    "params_csv": "test/fixtures/extra/quaids_demos_rand2_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_demos_rand2_shares.csv"
+  },
+  {
+    "name": "linear_demos_real",
+    "quaids": false,
+    "demos": true,
+    "params_len": 24,
+    "params_csv": "test/fixtures/extra/linear_demos_real_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_demos_real_shares.csv"
+  },
+  {
+    "name": "linear_demos_rand1",
+    "quaids": false,
+    "demos": true,
+    "params_len": 24,
+    "params_csv": "test/fixtures/extra/linear_demos_rand1_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_demos_rand1_shares.csv"
+  },
+  {
+    "name": "linear_demos_rand2",
+    "quaids": false,
+    "demos": true,
+    "params_len": 24,
+    "params_csv": "test/fixtures/extra/linear_demos_rand2_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_demos_rand2_shares.csv"
+  },
+  {
+    "name": "quaids_nodemos_real",
+    "quaids": true,
+    "demos": false,
+    "params_len": 15,
+    "params_csv": "test/fixtures/extra/quaids_nodemos_real_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_nodemos_real_shares.csv"
+  },
+  {
+    "name": "quaids_nodemos_rand1",
+    "quaids": true,
+    "demos": false,
+    "params_len": 15,
+    "params_csv": "test/fixtures/extra/quaids_nodemos_rand1_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_nodemos_rand1_shares.csv"
+  },
+  {
+    "name": "quaids_nodemos_rand2",
+    "quaids": true,
+    "demos": false,
+    "params_len": 15,
+    "params_csv": "test/fixtures/extra/quaids_nodemos_rand2_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/quaids_nodemos_rand2_shares.csv"
+  },
+  {
+    "name": "linear_nodemos_real",
+    "quaids": false,
+    "demos": false,
+    "params_len": 12,
+    "params_csv": "test/fixtures/extra/linear_nodemos_real_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_nodemos_real_shares.csv"
+  },
+  {
+    "name": "linear_nodemos_rand1",
+    "quaids": false,
+    "demos": false,
+    "params_len": 12,
+    "params_csv": "test/fixtures/extra/linear_nodemos_rand1_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_nodemos_rand1_shares.csv"
+  },
+  {
+    "name": "linear_nodemos_rand2",
+    "quaids": false,
+    "demos": false,
+    "params_len": 12,
+    "params_csv": "test/fixtures/extra/linear_nodemos_rand2_params.csv",
+    "expected_shares_csv": "test/fixtures/extra/linear_nodemos_rand2_shares.csv"
+  }
+]
+

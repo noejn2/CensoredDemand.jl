@@ -54,12 +54,73 @@ loglikes_df <- data.frame(loglike = as.numeric(loglikes))
 params_shares_df  <- data.frame(value = as.numeric(params_shares))
 params_loglike_df <- data.frame(value = as.numeric(params_loglike))
 
+## ---- Full-precision writer ------------------------------------------------
+# Every numeric value is written with sprintf("%.17g", v): 17 significant
+# decimal digits. This is the standard shortest representation that uniquely
+# identifies any IEEE-754 binary64 and round-trips exactly under a correctly
+# rounded parser -- which is what the consumer (Julia's parse(Float64, .);
+# likewise Python's float()) uses. We deliberately do NOT emit C99 hex floats
+# ("%a"): a hex literal would not be parsed as a number by a generic CSV ->
+# Float64 reader and would break the Julia port.
+#
+# NOTE: R's own as.numeric() is not correctly rounded, so it cannot be used to
+# verify round-trip for ~2% of values (a 17-digit decimal can land on a
+# neighbouring double under R's parser even though it is exact under a correct
+# one). We therefore verify round-trip with Julia (see julia_roundtrip_check),
+# the actual consumer.
+fmt_full <- function(x) vapply(x, function(v) {
+  if (is.na(v) || !is.finite(v)) return(as.character(v))
+  sprintf("%.17g", v)
+}, character(1))
+
+# Path to the Julia round-trip verifier script (lives next to this R script).
+verifier_path <- function()
+  "/Users/noejnava/Desktop/julia-mcp-censored-quaids/scripts/verify_roundtrip.jl"
+
+# Verify, using Julia's correctly-rounded parser, that every value in `path`
+# parses back to the exact bit pattern in `df`. We pass the originals to Julia
+# as exact hex-float literals (lossless) and compare against parse(Float64,csv).
+julia_roundtrip_check <- function(df, path) {
+  cols <- names(df)[vapply(df, is.numeric, logical(1))]
+  if (length(cols) == 0) return(invisible(TRUE))
+  hex <- as.data.frame(lapply(df[cols], function(col)
+    vapply(col, function(v) if (is.na(v) || !is.finite(v)) "NaN" else sprintf("%a", v),
+           character(1))), check.names = FALSE, stringsAsFactors = FALSE)
+  # Only compare the numeric columns of `path`; write a numeric-only copy.
+  num_only <- as.data.frame(lapply(df[cols], function(col)
+    vapply(col, function(v) if (is.na(v) || !is.finite(v)) "NaN" else sprintf("%.17g", v),
+           character(1))), check.names = FALSE, stringsAsFactors = FALSE)
+  dec_path <- tempfile(fileext = ".csv")
+  hex_path <- tempfile(fileext = ".csv")
+  utils::write.csv(num_only, dec_path, row.names = FALSE, quote = FALSE)
+  utils::write.csv(hex,      hex_path, row.names = FALSE, quote = FALSE)
+  res <- system2("julia", c(verifier_path(), dec_path, hex_path),
+                 stdout = TRUE, stderr = TRUE)
+  unlink(c(dec_path, hex_path))
+  if (!any(grepl("OK", res))) {
+    stop(sprintf("Julia round-trip verification failed for %s:\n%s",
+                 basename(path), paste(res, collapse = "\n")))
+  }
+  invisible(TRUE)
+}
+
+write_full_precision <- function(df, path) {
+  out <- df
+  for (nm in names(out)) {
+    if (is.numeric(out[[nm]])) out[[nm]] <- fmt_full(out[[nm]])
+  }
+  # quote = FALSE: the %.17g strings contain no commas/quotes, so unquoted is
+  # safe and keeps every value trivially parseable as a number by any reader.
+  write.csv(out, path, row.names = FALSE, quote = FALSE)
+  julia_roundtrip_check(df, path)
+}
+
 ## ---- Write CSVs -----------------------------------------------------------
-write.csv(testing_data_df,  file.path(out_dir, "testing_data.csv"),   row.names = FALSE)
-write.csv(params_shares_df, file.path(out_dir, "params_shares.csv"),  row.names = FALSE)
-write.csv(params_loglike_df,file.path(out_dir, "params_loglike.csv"), row.names = FALSE)
-write.csv(qshares_df,       file.path(out_dir, "qshares.csv"),        row.names = FALSE)
-write.csv(loglikes_df,      file.path(out_dir, "loglikes.csv"),       row.names = FALSE)
+write_full_precision(testing_data_df,  file.path(out_dir, "testing_data.csv"))
+write_full_precision(params_shares_df, file.path(out_dir, "params_shares.csv"))
+write_full_precision(params_loglike_df,file.path(out_dir, "params_loglike.csv"))
+write_full_precision(qshares_df,       file.path(out_dir, "qshares.csv"))
+write_full_precision(loglikes_df,      file.path(out_dir, "loglikes.csv"))
 
 ## ---- Write meta JSON (hand-built, base R only) ----------------------------
 json <- paste0(
