@@ -85,12 +85,18 @@ Three buildable layers, bottom-up:
 - The per-observation loop in `censoredaidsLoglike` is embarrassingly parallel
   (each household's contribution is independent). Parallelize it (Julia threads / parallel map).
 - **Done when:** parallel path is faster and bit-for-bit consistent with the serial path.
+- ✅ DONE. `Threads.@threads` over the household loop; replaced the shared sequential RNG with a
+  per-obs `MersenneTwister(hash((seed, i)))` (`rng` kwarg → `seed`) so results are order- and
+  thread-independent. **Bit-identical across 1/4/8 threads** (sum −4511.663045501727), **~5.6× at 8
+  threads** (0.110s → 0.020s). `bench/bench_loglike.jl`.
 
 ### M6 — Return to testing (regression after parallelization)  ⟵ *NEW (Noé)*
-- Re-run ALL gates: R golden fixtures, the M4 theory identities, the external reference.
+- Re-run ALL gates: R golden fixtures, the M4 theory identities.
   Parallelization must change speed only, never the numbers.
 - Benchmark serial vs. parallel; record speedup.
 - **Done when:** every prior gate still passes; speedup documented. *Then we move on.*
+- ✅ DONE. Full suite 41/41 green post-parallelization (R-parity M0–M2, M3 estimate/elasticities,
+  M4 identities/floor); cross-thread bit-identity + 5.6× speedup recorded via `bench/bench_loglike.jl`.
 
 ### M7 — Job entrypoint & container
 - `estimate(data, config) -> results(JSON)` plus a CLI/headless entrypoint (CSV/JSON in, JSON out).
