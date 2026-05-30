@@ -95,6 +95,8 @@ function run_job(config::AbstractDict)::Dict
         floor_mode = Symbol(String(_cfg_get(config, "floor_mode", "additive_r")))
         maxiters   = Int(_cfg_get(config, "maxiters", 500))
         reps       = Int(_cfg_get(config, "reps", 100_000))
+        algorithm   = Symbol(String(_cfg_get(config, "algorithm", "neldermead")))
+        price_index = Symbol(String(_cfg_get(config, "price_index", "translog")))
         share_names = _as_str_vec(_cfg_get(config, "share_names", nothing))
 
         isempty(share_cols) && error("config: `share_cols` must be non-empty")
@@ -135,7 +137,8 @@ function run_job(config::AbstractDict)::Dict
                            quaids = quaids, demographics = Z,
                            start = cfg_params,
                            mc_points = mc_points, maxiters = maxiters,
-                           floor_mode = floor_mode)
+                           floor_mode = floor_mode,
+                           algorithm = algorithm, price_index = price_index)
             params_hat = collect(Float64.(res.params))
             vcov_hat   = Matrix{Float64}(res.vcov)
             result["estimate"] = Dict{String,Any}(
@@ -165,7 +168,9 @@ function run_job(config::AbstractDict)::Dict
 
             el = censored_elasticity(P, b, params_e;
                                      quaids = quaids, demographics = Z,
-                                     vcov = vcov_e, reps = reps)
+                                     vcov = vcov_e, reps = reps,
+                                     price_index = price_index,
+                                     shares = (price_index === :stone ? S : nothing))
 
             ela = Dict{String,Any}(
                 "elasticities" => _rows(el.elasticities),
@@ -183,6 +188,8 @@ function run_job(config::AbstractDict)::Dict
             "n_demographics" => ndemo,
             "mc_points"      => mc_points,
             "floor_mode"     => String(floor_mode),
+            "algorithm"      => String(algorithm),
+            "price_index"    => String(price_index),
             "reps"           => reps,
             "elapsed_s"      => round(time() - t_start; digits = 3),
         )

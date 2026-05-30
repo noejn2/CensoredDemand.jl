@@ -32,16 +32,20 @@ using Random
 # `params_model` excludes the trailing sigma block (R passes Params[-sigma]).
 function _mu_shares(muPrices::AbstractVector, muBudget::Real,
                     muDemogs, params_model::AbstractVector;
-                    quaids::Bool, has_dems::Bool)
+                    quaids::Bool, has_dems::Bool,
+                    price_index::Symbol = :translog, mu_shares = nothing)
     m = length(muPrices)
     P1 = reshape(Vector{Float64}(muPrices), 1, m)     # 1 x m price matrix
     b1 = [Float64(muBudget)]                          # length-1 budget
+    sh1 = mu_shares === nothing ? nothing : reshape(Vector{Float64}(mu_shares), 1, m)
     if has_dems
         t = length(muDemogs)
         Z1 = reshape(Vector{Float64}(muDemogs), 1, t) # 1 x t demographics
-        W = aids_shares(P1, b1, params_model; quaids = quaids, demographics = Z1)
+        W = aids_shares(P1, b1, params_model; quaids = quaids, demographics = Z1,
+                        price_index = price_index, shares = sh1)
     else
-        W = aids_shares(P1, b1, params_model; quaids = quaids, demographics = nothing)
+        W = aids_shares(P1, b1, params_model; quaids = quaids, demographics = nothing,
+                        price_index = price_index, shares = sh1)
     end
     return vec(W)                                     # length m
 end
@@ -123,7 +127,9 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
                              reps::Integer = 100_000,
                              epsilons = nothing,
                              delta::Real = 1e-5,
-                             rng = Random.MersenneTwister(20240530))
+                             rng = Random.MersenneTwister(20240530),
+                             price_index::Symbol = :translog,
+                             shares = nothing)
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -140,6 +146,14 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
     muBudget = Float64(point(b))
     muDemogs = has_dems ? [Float64(point(@view demographics[:, k])) for k in 1:t] :
                           Float64[]
+
+    # Stone price index (if requested) uses the point (mean) of the OBSERVED shares.
+    muShares = nothing
+    if price_index === :stone
+        shares === nothing && error("censored_elasticity: price_index=:stone requires observed `shares`")
+        Sh = Matrix{Float64}(shares)
+        muShares = [Float64(point(@view Sh[:, k])) for k in 1:m]
+    end
 
     # ----: Model params (drop the trailing sigma block) :----
     nparam = length(pars)
@@ -177,7 +191,8 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
 
     # ----: E(X, b) -- expected share without disturbance :----
     U = _mu_shares(muPrices, muBudget, muDemogs, params_model;
-                   quaids = quaids, has_dems = has_dems)
+                   quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
     E_Uobs = _expected_obs(U, eps_full)              # length m
 
     # ----: E(X + delta, b) -- expected share with disturbance in each variable :----
@@ -190,14 +205,16 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
             # Budget perturbation in levels.
             muBudget_delta = log(exp(muBudget) + delta)
             u = _mu_shares(muPrices, muBudget_delta, muDemogs, params_model;
-                           quaids = quaids, has_dems = has_dems)
+                           quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
         else
             # Price x perturbation in levels.
             mp = exp.(muPrices)
             mp[x] += delta
             muPrices_delta = log.(mp)
             u = _mu_shares(muPrices_delta, muBudget, muDemogs, params_model;
-                           quaids = quaids, has_dems = has_dems)
+                           quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
         end
         m_EUobs_dx[:, x] = _expected_obs(u, eps_full)
     end
@@ -209,7 +226,8 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
         b_delta = copy(params_model)
         b_delta[p] += delta
         u = _mu_shares(muPrices, muBudget, muDemogs, b_delta;
-                       quaids = quaids, has_dems = has_dems)
+                       quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
         EUobs_db[p, :] = _expected_obs(u, eps_full)
     end
 
@@ -224,13 +242,15 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
             if x > m
                 muBudget_delta = log(exp(muBudget) + delta)
                 u = _mu_shares(muPrices, muBudget_delta, muDemogs, b_delta;
-                               quaids = quaids, has_dems = has_dems)
+                               quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
             else
                 mp = exp.(muPrices)
                 mp[x] += delta
                 muPrices_delta = log.(mp)
                 u = _mu_shares(muPrices_delta, muBudget, muDemogs, b_delta;
-                               quaids = quaids, has_dems = has_dems)
+                               quaids = quaids, has_dems = has_dems,
+                   price_index = price_index, mu_shares = muShares)
             end
             mat[p, :] = _expected_obs(u, eps_full)
         end

@@ -260,6 +260,17 @@ end
         @test all(isfinite, censored_loglike(S, P, b, params; quaids = true,
                                              demographics = Z, mc_points = 2000, price_index = :stone))
 
+        # Stone elasticities require observed shares; finite + adding-up holds.
+        VCOV = readdlm(joinpath(FIX, "elast", "vcov.csv"), ',')
+        EPS  = readdlm(joinpath(FIX, "elast", "epsilons.csv"), ',')
+        el_st = censored_elasticity(P, b, params; quaids = true, demographics = Z, vcov = VCOV,
+                                    reps = size(EPS, 1), epsilons = EPS, price_index = :stone, shares = S)
+        @test all(isfinite, el_st.elasticities)
+        @test abs(sum(el_st.e_uobs) - 1.0) < 1e-8
+        @test_throws ErrorException censored_elasticity(P, b, params; quaids = true,
+                       demographics = Z, vcov = VCOV, reps = size(EPS, 1), epsilons = EPS,
+                       price_index = :stone)   # missing shares
+
         # BHHH optimizer (small subsample, few iters): runs, never worsens, OPG vcov is PSD.
         idx = 1:60
         Ss, Ps, bs, Zs = S[idx, :], P[idx, :], b[idx], Z[idx, :]
