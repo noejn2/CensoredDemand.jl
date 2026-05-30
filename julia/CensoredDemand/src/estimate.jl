@@ -135,6 +135,74 @@ function _project_psd(M::AbstractMatrix; floor::Real = 1e-10)
     return Matrix(P), true
 end
 
+# Gauss–Newton / BHHH optimizer driven by the per-observation score matrix — the gradient-based
+# routine the original GAUSS code used. `ll_vec(theta)` returns the length-n vector of per-household
+# log-likelihoods. Direction is (S'S)⁻¹ g, where g = Σᵢ sᵢ and S is the n×p score matrix (central
+# finite differences of the per-obs likelihoods — clean because the per-obs RNG is fixed). A
+# step-halving line search guarantees the summed log-likelihood increases. Convergence: mean
+# |gradient| per observation < gtol. Covariance is the OPG estimator (S'S)⁻¹ (no separate Hessian).
+function _bhhh(ll_vec, theta0::AbstractVector; maxiters::Integer, gtol::Real,
+               fdstep::Real, line_halvings::Integer = 40, show_trace::Bool = false)
+    theta = collect(float.(theta0))
+    p = length(theta)
+    n = length(ll_vec(theta))
+    Smat = zeros(n, p)
+    score!(th) = begin
+        for k in 1:p
+            h = fdstep * max(abs(th[k]), 1.0)
+            tp = copy(th); tp[k] += h
+            tm = copy(th); tm[k] -= h
+            Smat[:, k] = (ll_vec(tp) .- ll_vec(tm)) ./ (2h)
+        end
+        return vec(sum(Smat, dims = 1))                 # gradient g = Σᵢ sᵢ
+    end
+
+    g = zeros(p)
+    iters = 0
+    converged = false
+    for it in 1:maxiters
+        iters = it
+        f0 = sum(ll_vec(theta))
+        g = score!(theta)
+        gnorm = sum(abs, g) / n
+        show_trace && println("bhhh it=$it  loglik=$(round(f0, digits = 3))  mean|g|/n=$(round(gnorm, sigdigits = 3))")
+        if gnorm < gtol
+            converged = true
+            break
+        end
+        OPGm = Smat' * Smat
+        d = try
+            OPGm \ g
+        catch
+            pinv(OPGm) * g
+        end
+        step = 1.0
+        improved = false
+        for _ in 1:line_halvings                         # step-halving line search
+            cand = theta .+ step .* d
+            fc = sum(ll_vec(cand))
+            if isfinite(fc) && fc > f0
+                theta = cand
+                improved = true
+                break
+            end
+            step /= 2
+        end
+        improved || break                                # no improving step → stop
+    end
+
+    g = score!(theta)                                    # final score at the estimate
+    OPG = Smat' * Smat
+    vcov = try
+        inv(OPG)
+    catch
+        pinv(OPG)
+    end
+    return (params = theta, loglike = sum(ll_vec(theta)), opg = OPG, vcov = vcov,
+            gradient = g, gradnorm = sum(abs, g) / n,
+            converged = converged, iterations = iters)
+end
+
 # ----------------------------------------------------------------------------
 # Estimation entry point
 # ----------------------------------------------------------------------------
@@ -158,14 +226,21 @@ demographics, mc_points))` with `Optim.jl`. The objective is deterministic
 - `budget`       : length-n vector of LOGGED total expenditure.
 - `quaids`       : include the quadratic term if true.
 - `demographics` : `nothing` or an n×t demographic matrix.
-- `start`        : full parameter vector to warm-start from. If `nothing`,
-                   `_default_start` builds a generic guess (good starts matter!).
+- `start`        : full parameter vector to warm-start from. If `nothing`, a principled
+                   LA-AIDS start (`initial_values`) is built and validated (`check_start`).
 - `mc_points`    : QMC sample budget passed to `censored_loglike`.
-- `optimizer`    : an `Optim.jl` optimizer (default `NelderMead()`; `LBFGS()`
-                   with finite-difference gradients is also fine).
+- `algorithm`    : `:neldermead` (default, derivative-free, via Optim) or `:bhhh` — the
+                   gradient-based Gauss–Newton/BHHH step on the per-observation scores, with
+                   the OPG covariance `(S'S)⁻¹` (converges in far fewer iterations).
+- `price_index`  : `:translog` (default, full QUAIDS index) or `:stone` (LA-AIDS Stone index —
+                   predetermined, so it linearizes the share equations and eases estimation).
+- `optimizer`    : the `Optim.jl` optimizer used when `algorithm = :neldermead` (default
+                   `NelderMead()`; `LBFGS()` etc. also fine).
 - `maxiters`     : maximum optimizer iterations.
-- `g_tol`,`x_tol`,`f_tol` : Optim convergence tolerances (modest by default to
-                   tolerate QMC roughness).
+- `g_tol`,`x_tol`,`f_tol` : convergence tolerances. For `:bhhh`, `g_tol` is the mean
+                   |gradient|-per-observation threshold.
+- `parallel`     : thread the per-observation likelihood loop (default true).
+- `check`        : run `check_start` on the start and warn if inappropriate (default true).
 
 # Returns
 A `NamedTuple` with at least:
@@ -190,20 +265,21 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   hess_h_rel::Real = 1e-4, hess_h_abs::Real = 1e-5,
                   floor_mode::Symbol = :additive_r,
                   parallel::Bool = true,
-                  check::Bool = true)
+                  check::Bool = true,
+                  algorithm::Symbol = :neldermead,
+                  price_index::Symbol = :translog)
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
     t = demographics === nothing ? 0 : size(demographics, 2)
 
-    # --- deterministic negative log-likelihood objective ---
+    # --- deterministic objectives (per-obs vector + summed) ---
     # censored_loglike's default rng is a FIXED seed => same QMC draws each call.
-    nll(theta) = -sum(censored_loglike(shares, P, budget, theta;
-                                       quaids = quaids,
-                                       demographics = demographics,
-                                       mc_points = mc_points,
-                                       floor_mode = floor_mode,
-                                       parallel = parallel))
+    ll_vec(theta) = censored_loglike(shares, P, budget, theta;
+                                     quaids = quaids, demographics = demographics,
+                                     mc_points = mc_points, floor_mode = floor_mode,
+                                     parallel = parallel, price_index = price_index)
+    nll(theta) = -sum(ll_vec(theta))
 
     # --- starting values ---
     # Default to a principled LA-AIDS start; verify any start is viable before optimizing.
@@ -217,6 +293,30 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
     end
 
     # --- optimize ---
+    algorithm in (:neldermead, :bhhh) ||
+        error("estimate: algorithm must be :neldermead or :bhhh " *
+              "(use the `optimizer` kwarg for other Optim methods)")
+
+    if algorithm === :bhhh
+        # Gradient-based Gauss–Newton/BHHH (the original GAUSS routine): vcov is the OPG
+        # covariance (S'S)⁻¹, built from the per-observation scores — no separate Hessian.
+        bh = _bhhh(ll_vec, theta0; maxiters = Int(maxiters), gtol = g_tol,
+                   fdstep = hess_h_rel, show_trace = show_trace)
+        vcov, projected = _project_psd(bh.vcov)
+        return (params      = bh.params,
+                loglike     = bh.loglike,
+                vcov        = vcov,
+                se          = sqrt.(clamp.(diag(vcov), 0.0, Inf)),
+                hessian     = bh.opg,
+                vcov_projected = projected,
+                converged   = bh.converged,
+                iterations  = bh.iterations,
+                nll         = -bh.loglike,
+                optimizer   = :bhhh,
+                start_check = start_check,
+                result      = bh)
+    end
+
     # Use the current (non-deprecated) Optim.Options keyword names.
     opts = Optim.Options(iterations = Int(maxiters),
                          g_abstol = g_tol, x_abstol = x_tol, f_reltol = f_tol,

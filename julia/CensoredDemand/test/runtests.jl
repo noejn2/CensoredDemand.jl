@@ -242,4 +242,37 @@ end
         @test length(iv2) == 18
         @test check_start(iv2, S, P, b; quaids = false, demographics = nothing).ok
     end
+
+    @testset "Options: Stone price index + BHHH algorithm" begin
+        td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+        scol(name) = Float64.(td[:, findfirst(==(name), h)])
+        S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+
+        # Stone index option: requires observed shares, and genuinely differs from translog.
+        W_tl = aids_shares(P, b, params[1:27]; quaids = true, demographics = Z, price_index = :translog)
+        W_st = aids_shares(P, b, params[1:27]; quaids = true, demographics = Z,
+                           price_index = :stone, shares = S)
+        @test all(isfinite, W_st)
+        @test maximum(abs.(W_st .- W_tl)) > 1e-5
+        @test_throws ErrorException aids_shares(P, b, params[1:27]; quaids = true,
+                                                demographics = Z, price_index = :stone)
+        @test all(isfinite, censored_loglike(S, P, b, params; quaids = true,
+                                             demographics = Z, mc_points = 2000, price_index = :stone))
+
+        # BHHH optimizer (small subsample, few iters): runs, never worsens, OPG vcov is PSD.
+        idx = 1:60
+        Ss, Ps, bs, Zs = S[idx, :], P[idx, :], b[idx], Z[idx, :]
+        iv  = initial_values(Ss, Ps, bs; quaids = true, demographics = Zs)
+        ll0 = sum(censored_loglike(Ss, Ps, bs, iv; quaids = true, demographics = Zs, mc_points = 300))
+        res = estimate(Ss, Ps, bs; quaids = true, demographics = Zs, start = iv,
+                       algorithm = :bhhh, mc_points = 300, maxiters = 4)
+        @test res.optimizer == :bhhh
+        @test res.loglike >= ll0 - 1e-6
+        @test size(res.vcov) == (33, 33)
+        @test isposdef(Symmetric(res.vcov))
+
+        @test_throws ErrorException estimate(Ss, Ps, bs; quaids = true, demographics = Zs,
+                                             algorithm = :nope, maxiters = 1)
+    end
 end

@@ -85,7 +85,8 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
                           seed::Integer = 20240530,
                           mc_points::Integer = 2000,
                           floor_mode::Symbol = :additive_r,
-                          parallel::Bool = true)::Vector{Float64}
+                          parallel::Bool = true,
+                          price_index::Symbol = :translog)::Vector{Float64}
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -95,7 +96,8 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
 
     # ----: predicted shares :----
     U = aids_shares(P, budget, p[1:(end - j)];
-                    quaids = quaids, demographics = demographics)   # n x m
+                    quaids = quaids, demographics = demographics,
+                    price_index = price_index, shares = S)          # n x m
 
     # ----: micro-regime dummies :----
     d = S .!= 0.0                                  # n x m Bool

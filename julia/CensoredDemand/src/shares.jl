@@ -29,7 +29,8 @@ Compute the AIDS/QUAIDS demand share equations.
 Returns an n x m matrix of estimated shares (column order = good order).
 """
 function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::AbstractVector;
-                     quaids::Bool=false, demographics=nothing)::Matrix{Float64}
+                     quaids::Bool=false, demographics=nothing,
+                     price_index::Symbol=:translog, shares=nothing)::Matrix{Float64}
 
     Lnp = Matrix{Float64}(prices)              # n x m
     n, m = size(Lnp)
@@ -106,15 +107,26 @@ function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::Abs
     end
 
     # ----: Price index (per row) :----
-    # lnpindex_i = Lnp_i' * full_alpha + 0.5 * Lnp_i' * full_gamma * Lnp_i
-    lnpindex = Lnp * full_alpha                            # length n
-    Gp = Lnp * full_gamma                                  # n x m  (each row = full_gamma %*% p_i, since gamma symmetric)
-    @inbounds for i in 1:n
-        acc = 0.0
-        for jj in 1:m
-            acc += Lnp[i, jj] * Gp[i, jj]
+    # `:translog` (default) = full QUAIDS index ln a(p) = p'α + 0.5 p'Γp (nonlinear in α,Γ).
+    # `:stone`   = LA-AIDS Stone index ln P* = Σ wₖ ln pₖ — uses observed shares, so it is
+    #             predetermined and linearizes the share equations ("limits the nonlinearity").
+    Gp = Lnp * full_gamma                                  # n x m (Γ·lnp term; used in the shares below)
+    if price_index === :stone
+        shares === nothing && error("aids_shares: price_index=:stone requires observed `shares`")
+        Wobs = Matrix{Float64}(shares)
+        size(Wobs) == (n, m) || error("aids_shares: `shares` must be $(n)×$(m) for the Stone index")
+        lnpindex = vec(sum(Wobs .* Lnp, dims = 2))
+    elseif price_index === :translog
+        lnpindex = Lnp * full_alpha                        # length n
+        @inbounds for i in 1:n
+            acc = 0.0
+            for jj in 1:m
+                acc += Lnp[i, jj] * Gp[i, jj]
+            end
+            lnpindex[i] += 0.5 * acc
         end
-        lnpindex[i] += 0.5 * acc
+    else
+        error("aids_shares: price_index must be :translog or :stone, got :$price_index")
     end
 
     # ----: Shares :----
