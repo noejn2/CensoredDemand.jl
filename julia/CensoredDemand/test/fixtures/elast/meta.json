@@ -1,0 +1,31 @@
+{
+  "description": "R elasticity oracle for validating a Julia port of censoredAIDS::censoredElasticity (SSB 4-good QUAIDS).",
+  "model": "QUAIDS",
+  "m": 4,
+  "n_demographics": 4,
+  "n_obs": 615,
+  "quaids": true,
+  "reps": 10000,
+  "seed_epsilons": 424242,
+  "epsilon_draw": "set.seed(424242); mvtnorm::rmvnorm(n=reps, sigma=Sigma, method=\"chol\"); epsilons.csv is the reps x (m-1) = 10000 x 3 matrix BEFORE cbind(-rowSums). Julia validates near-deterministically by INJECTING this exact matrix (then appending the -rowSums column itself).",
+  "Sigma_construction": "Sigma is (m-1)x(m-1)=3x3; upper.tri(diag=TRUE) filled with the last j=6 params (the sigma block of params_loglike), then Sigma = t(S) %*% S.",
+  "vcov_construction": "set.seed(7); A = matrix(runif(33*33),33,33); vcov = (A + t(A))/2 + 33*diag(33). Symmetric positive-definite 33x33. SE path uses the leading 27x27 block (vcov[1:27,1:27]) divided by n=615.",
+  "delta": 1e-05,
+  "func": "mean (column means, na.rm=TRUE)",
+  "demographic_order_model": ["age", "size", "educ", "sex"],
+  "demographic_order_note": "MODEL order is [age,size,educ,sex]; the raw testing_data.csv column order is [age,size,sex,educ]. muDemogs and the theta params both follow the MODEL order.",
+  "good_order": ["SSB", "Juice", "Milk", "Water"],
+  "params": "33-length params_loglike.csv; first 27 are model params (alpha[3], beta[3], gamma[6], theta[12], lambda[3]) passed to muaidsCalculate; last 6 are the sigma block used to build Sigma.",
+  "elasticities_layout": {
+    "shape": "4 x 5",
+    "rows": "quantity i in good order [SSB,Juice,Milk,Water] (uncompensated own/cross response of quantity i)",
+    "cols": ["Price SSB", "Price Juice", "Price Milk", "Price Water", "Income"],
+    "note": "Columns 1..m are price elasticities (own-price on the diagonal, with the identity correction etas[1:m,1:m]-diag(1,m) already applied); column m+1 is the income/expenditure elasticity. Matrix is returned transposed so rows index quantities."
+  },
+  "se_layout": "Same 4 x 5 shape and same row/col ordering as elasticities_R.csv; delta-method standard errors using vcov[1:27,1:27]/n.",
+  "e_uobs_layout": "length m = 4 column vector, good order [SSB,Juice,Milk,Water]; mean of Amemiya-Tobin-corrected observed shares over reps draws.",
+  "mu_inputs_layout": "name,value rows: muPrice_{SSB,Juice,Milk,Water}, muBudget, muDemog_{age,size,educ,sex} (the column means actually used as the evaluation point).",
+  "files": ["epsilons.csv", "vcov.csv", "elasticities_R.csv", "e_uobs_R.csv", "se_R.csv", "mu_inputs.csv", "meta.json"],
+  "R_version": "R version 4.5.3 (2026-03-11)",
+  "mvtnorm_version": "1.4.0"
+}

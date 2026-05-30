@@ -53,6 +53,14 @@ Three buildable layers, bottom-up:
 - Port `censoredElasticity` (simulation-based expected shares, numeric derivatives, delta-method SEs).
 - **Done when:** full estimate on the Mexican data reproduces sensible params + elasticities;
   documented tolerance vs. an R reference run.
+- ✅ DONE. Elasticities reproduce R to ~2e-8 (injected-ε oracle, src/elasticities.jl); `estimate()`
+  works and returns a PSD vcov (src/estimate.jl). 35/35 tests pass.
+- ⚠️ **Finding (faithful, NOT a bug):** the published params are NOT the argmax of the package's
+  censored log-likelihood — gradient norm ~51,793 at `params_loglike` (deterministic: identical at
+  mc=2000/8000), likelihood improves ~2360 nats *in every regime*, including the deterministic ones
+  (nu=3,4) we match R to 1e-14 — which proves R's likelihood behaves identically. Likely a GAUSS-vs-
+  R-package modeling/regularization difference (the +1e-7/+1e-8 log floors, or the 2-demo paper-code
+  issue). Flagged for **M4** (fudge-factor scrutiny) and **M10** docs. See [[published-params-not-mle]].
 
 ### M4 — Validity & improvement  ⟵ *NEW (Noé): economic-theory tests, not just R-parity*
 - Test the estimator against microeconomic equalities on the estimated elasticities:

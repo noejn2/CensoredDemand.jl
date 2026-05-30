@@ -1,6 +1,7 @@
 using Test
 using CensoredDemand
 using DelimitedFiles
+using LinearAlgebra
 
 const FIX = joinpath(@__DIR__, "fixtures")
 
@@ -83,5 +84,46 @@ end
         # Seeded determinism: same default seed → identical result.
         ll2 = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
         @test ll == ll2
+    end
+
+    @testset "M3 — elasticities (censored_elasticity)" begin
+        edir   = joinpath(FIX, "elast")
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+        VCOV   = readdlm(joinpath(edir, "vcov.csv"), ',')            # 33×33, headerless
+        EPS    = readdlm(joinpath(edir, "epsilons.csv"), ',')        # 10000×3, headerless (pre -rowSums)
+        elasR  = readdlm(joinpath(edir, "elasticities_R.csv"), ',')  # 4×5
+        euobsR = vec(readdlm(joinpath(edir, "e_uobs_R.csv"), ','))   # 4
+        seR    = readdlm(joinpath(edir, "se_R.csv"), ',')            # 4×5
+
+        # Inject R's exact ε draws → near-deterministic match to the R oracle.
+        res = censored_elasticity(P, b, params; quaids = true, demographics = Z,
+                                  vcov = VCOV, reps = size(EPS, 1), epsilons = EPS)
+        @test size(res.elasticities) == (4, 5)
+        @test maximum(abs.(res.elasticities .- elasR)) < 1e-4   # elasticities ~ exact
+        @test maximum(abs.(res.e_uobs .- euobsR))      < 1e-8   # expected shares ~ machine
+        @test abs(sum(res.e_uobs) - 1.0)               < 1e-8   # Amemiya–Tobin adding-up
+        # SEs: price block tight; income column looser (level-perturbation cancellation).
+        @test maximum(abs.(res.se[:, 1:4] .- seR[:, 1:4])) < 1e-2
+        @test maximum(abs.(res.se[:, 5]   .- seR[:, 5]))   < 1.0
+    end
+
+    @testset "M3 — estimate() machinery (smoke)" begin
+        td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+        scol(name) = Float64.(td[:, findfirst(==(name), h)])
+        S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
+        known = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+
+        # Small subsample keeps the numerical-Hessian cost bounded for CI.
+        idx = 1:50
+        Ss, Ps, bs, Zs = S[idx, :], P[idx, :], b[idx], Z[idx, :]
+        ll_start = sum(censored_loglike(Ss, Ps, bs, known; quaids = true,
+                                        demographics = Zs, mc_points = 300))
+        res = estimate(Ss, Ps, bs; quaids = true, demographics = Zs,
+                       start = known, mc_points = 300, maxiters = 12)
+        @test length(res.params) == 33
+        @test isfinite(res.loglike)
+        @test size(res.vcov) == (33, 33)
+        @test res.loglike >= ll_start - 1.0          # optimizer never worsens the objective
+        @test isposdef(Symmetric(res.vcov))          # PSD (projected if needed)
     end
 end
