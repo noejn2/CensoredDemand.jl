@@ -102,6 +102,16 @@ Three buildable layers, bottom-up:
 - `estimate(data, config) -> results(JSON)` plus a CLI/headless entrypoint (CSV/JSON in, JSON out).
 - Dockerfile (Julia + package, precompiled).
 - **Done when:** `docker run` produces correct results from a mounted input file.
+- ✅ CODE DONE + locally verified. `run_job(config)` + `bin/run.jl` (JSON config in / results JSON out),
+  wrapping `estimate`/`censored_elasticity`; `sample/` demo reproduces R elasticities to 0.015 (own-draws
+  MC). JSON3 added. 53/53 tests. `Dockerfile` (julia:1.11-bookworm, deps precompiled in-image,
+  `JULIA_NUM_THREADS=auto`) + `.dockerignore` authored & statically sound.
+- ⚠️ **`docker build`/`run` BLOCKED by host environment** (not our artifacts): Docker Desktop's internal
+  proxy `http.docker.internal:3128` isn't forwarding registry traffic, so the daemon's build/pull pipeline
+  hangs (host `curl` to the registry works). Fix = Docker Desktop → Settings → Resources → Proxies → "No
+  proxy"/system default, then `docker build -t censored-demand:m7 .` && `docker run --rm -v <work>:/work
+  censored-demand:m7 /work/config.json`. OTHERWISE the image builds in the cloud in M8 (AWS CodeBuild),
+  where the local proxy is irrelevant — so this verification naturally completes there.
 
 ### M8 — AWS job layer
 - S3 (input data + results), AWS Batch compute, run-metadata store.

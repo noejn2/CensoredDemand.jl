@@ -154,6 +154,43 @@ end
             @test maximum(abs.(slut)) < 0.15
         end
 
+        @testset "M7 — run_job headless entrypoint (elasticities)" begin
+            edir = joinpath(FIX, "elast")
+            cfg = Dict{String,Any}(
+                "data_csv"         => joinpath(FIX, "testing_data.csv"),
+                "share_cols"       => ["s1", "s2", "s3", "s4"],
+                "logprice_cols"    => ["lnp1", "lnp2", "lnp3", "lnp4"],
+                "budget_col"       => "lnw",
+                "demographic_cols" => ["age", "size", "educ", "sex"],
+                "quaids"           => true,
+                "tasks"            => ["elasticities"],
+                "params"           => vec(readdlm(joinpath(FIX, "params_loglike.csv"),
+                                                  ',', header = true)[1]),
+                "vcov_csv"         => joinpath(edir, "vcov.csv"),
+                "reps"             => 20000,
+                "share_names"      => ["SSB", "Juice", "Milk", "Water"],
+            )
+
+            out = run_job(cfg)
+            @test out["status"] == "ok"
+            @test out["n_obs"] == 615
+            @test out["n_goods"] == 4
+            @test haskey(out, "elasticities")
+
+            ela = out["elasticities"]
+            # Matrices serialize as row-major arrays-of-arrays.
+            @test length(ela["elasticities"]) == 4
+            @test all(length(r) == 5 for r in ela["elasticities"])
+            @test length(ela["se"]) == 4
+            @test all(length(r) == 5 for r in ela["se"])
+            @test length(ela["e_uobs"]) == 4
+            @test ela["share_names"] == ["SSB", "Juice", "Milk", "Water"]
+
+            # Amemiya–Tobin adding-up of expected observed shares.
+            @test abs(sum(ela["e_uobs"]) - 1.0) < 1e-8
+            @test out["meta"]["n_demographics"] == 4
+        end
+
         @testset "principled floor is opt-in; default preserves R-parity" begin
             td, h = readcsv(joinpath(FIX, "testing_data.csv"))
             scol(name) = Float64.(td[:, findfirst(==(name), h)])

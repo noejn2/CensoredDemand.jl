@@ -17,8 +17,9 @@ using Optim
 using ForwardDiff
 using CSV
 using DataFrames
+using JSON3
 
-export aids_shares, censored_loglike, censored_elasticity, estimate
+export aids_shares, censored_loglike, censored_elasticity, estimate, run_job
 
 # ---- M1: AIDS/QUAIDS share equations ----
 # Faithful port of censoredAIDS::aidsCalculate. Validated to ~1e-16 vs R across
@@ -46,5 +47,11 @@ include("elasticities.jl")
 # Hessian. NOTE: the published params are NOT the argmax of this likelihood
 # (a faithful property of the package likelihood — see test/runtests.jl and PLAN.md).
 include("estimate.jl")
+
+# ---- M7: headless JSON-config job entrypoint ----
+# `run_job(config::AbstractDict)` drives estimate / censored_elasticity from a
+# plain config dict (parsed JSON). This is the surface the AWS job layer + MCP
+# server call. Wraps the body in try/catch -> {status:"ok"|"error", ...}.
+include("job.jl")
 
 end # module CensoredDemand
