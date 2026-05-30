@@ -1,0 +1,12 @@
+{
+  "n_obs": 615,
+  "n_goods": 4,
+  "n_demographics": 4,
+  "share_names": ["SSB", "Juice", "Milk", "Water"],
+  "demographic_order": ["age", "size", "educ", "sex"],
+  "quaids": true,
+  "params_shares_len": 27,
+  "params_loglike_len": 33,
+  "note": "Demographics column order is [age, size, educ, sex] -- the data order used to build theta. The theta matrix columns follow this demographic ordering; loglike params transpose theta while shares params do not."
+}
+

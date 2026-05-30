@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Terraform / AWS
+/aws/.terraform
+/aws/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars.local
+
+# Julia build artifacts / coverage
+*.cov
+*.jl.cov
+*.jl.*.cov
+/julia/**/deps/build.log
+docs/build/
+
+# NOTE: Manifest.toml is intentionally NOT ignored — we keep it committed
+# for reproducible environments.
