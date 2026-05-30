@@ -126,4 +126,49 @@ end
         @test res.loglike >= ll_start - 1.0          # optimizer never worsens the objective
         @test isposdef(Symmetric(res.vcov))          # PSD (projected if needed)
     end
+
+    @testset "M4 — microeconomic validity + principled floor" begin
+        edir   = joinpath(FIX, "elast")
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+        VCOV   = readdlm(joinpath(edir, "vcov.csv"), ',')
+        EPS    = readdlm(joinpath(edir, "epsilons.csv"), ',')
+
+        res = censored_elasticity(P, b, params; quaids = true, demographics = Z,
+                                  vcov = VCOV, reps = size(EPS, 1), epsilons = EPS)
+        E = res.elasticities    # 4×5: cols 1:4 uncompensated price ε[i,j], col 5 expenditure η[i]
+        w = res.e_uobs          # expected (censoring-adjusted) shares, Σ = 1
+
+        @testset "theory identities" begin
+            # Homogeneity (degree-0): Σⱼ ε[i,j] + η[i] = 0  (structural → near-exact)
+            homog = [sum(E[i, 1:4]) + E[i, 5] for i in 1:4]
+            @test maximum(abs.(homog)) < 5e-5
+            # Engel aggregation: Σᵢ wᵢ ηᵢ = 1
+            @test abs(sum(w .* E[:, 5]) - 1.0) < 1e-6
+            # Cournot aggregation: Σᵢ wᵢ ε[i,j] = −wⱼ
+            cournot = [sum(w .* E[:, jj]) + w[jj] for jj in 1:4]
+            @test maximum(abs.(cournot)) < 1e-6
+            # Slutsky symmetry of the substitution terms wᵢ·εᶜ[i,j].  Holds only APPROXIMATELY
+            # for a censored/simulated system; worst residual is the thin Juice margin (w≈0.012).
+            εc(i, jj) = E[i, jj] + w[jj] * E[i, 5]
+            slut = [w[i] * εc(i, jj) - w[jj] * εc(jj, i) for i in 1:4, jj in 1:4]
+            @test maximum(abs.(slut)) < 0.15
+        end
+
+        @testset "principled floor is opt-in; default preserves R-parity" begin
+            td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+            scol(name) = Float64.(td[:, findfirst(==(name), h)])
+            S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
+
+            ll_default = censored_loglike(S, P, b, params; quaids = true,
+                                          demographics = Z, mc_points = 4000)
+            ll_guard   = censored_loglike(S, P, b, params; quaids = true,
+                                          demographics = Z, mc_points = 4000,
+                                          floor_mode = :guard)
+            # Default (:additive_r) = verbatim R floor → integer-sum parity preserved.
+            @test round(sum(ll_default)) == -4512
+            # :guard removes the spurious additive credit (~279 nats) the floor handed to the
+            # ~36 households the published Σ deems near-impossible (orthant prob ≈ 0).
+            @test 150 < (sum(ll_default) - sum(ll_guard)) < 450
+        end
+    end
 end

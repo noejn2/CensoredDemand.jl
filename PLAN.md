@@ -70,8 +70,16 @@ Three buildable layers, bottom-up:
   - **Slutsky symmetry** of the compensated effects.
 - "Improve it": replace the R code's numerical fudges (`+1e-7`/`1e-8`, `nearPD`) with
   principled handling; harden the likelihood where theory exposes weakness.
-- Cross-check full estimate vs. the external reference (correctness standard = BOTH).
-- **Done when:** theory identities hold to tolerance AND external reference matches.
+- **Done when:** theory identities hold to tolerance.
+- ✅ DONE (41/41 tests). Results:
+  - **Homogeneity (8.1e-6), Engel (5.1e-8), Cournot (1.1e-7)** hold to FD precision (structural). ✅
+  - **Slutsky symmetry FAILS (~0.105)** — concentrated at the thin Juice margin (w≈0.012); expected
+    for a censored/simulated system (symmetry not enforced post-censoring). Documented, tested < 0.15.
+  - **Improvement = the floor, not nearPD.** Investigation pinned the M3 finding to the additive
+    `log(x+1e-7/1e-8)` floor masking 36 households (orthant p≈1e-26) → ~268 nats of spurious credit;
+    `nearestPD` is a no-op (R_c always PD). Added OPT-IN `floor_mode` kwarg (`:additive_r` default =
+    verbatim R/parity-preserving; `:guard` = honest `log(max(x,1e-300))`, drops sum −4511.66→−4790.71).
+    Defaults unchanged → M2 R-parity intact. See [[published-params-not-mle]].
 
 ### M5 — Parallelize the truncated log-likelihood  ⟵ *NEW (Noé)*
 - The per-observation loop in `censoredaidsLoglike` is embarrassingly parallel

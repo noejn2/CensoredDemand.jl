@@ -187,7 +187,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   maxiters::Integer = 2000,
                   g_tol::Real = 1e-6, x_tol::Real = 1e-8, f_tol::Real = 1e-10,
                   show_trace::Bool = false,
-                  hess_h_rel::Real = 1e-4, hess_h_abs::Real = 1e-5)
+                  hess_h_rel::Real = 1e-4, hess_h_abs::Real = 1e-5,
+                  floor_mode::Symbol = :additive_r)
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -198,7 +199,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
     nll(theta) = -sum(censored_loglike(shares, P, budget, theta;
                                        quaids = quaids,
                                        demographics = demographics,
-                                       mc_points = mc_points))
+                                       mc_points = mc_points,
+                                       floor_mode = floor_mode))
 
     # --- starting values ---
     theta0 = start === nothing ? _default_start(m, t; quaids = quaids) :
