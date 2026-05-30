@@ -54,4 +54,34 @@ end
             end
         end
     end
+
+    @testset "M2 — censored log-likelihood (censored_loglike)" begin
+        td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+        col(name) = Float64.(td[:, findfirst(==(name), h)])
+        S = hcat(col("s1"), col("s2"), col("s3"), col("s4"))   # raw shares (zeros = censored)
+
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+        @test length(params) == 33
+        llR = vec(readdlm(joinpath(FIX, "loglikes.csv"), ',', header = true)[1])
+        nu  = vec(Int.(round.(readdlm(joinpath(FIX, "regimes.csv"), ',', header = true)[1])))
+
+        ll = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
+        @test length(ll) == 615
+
+        # R's own gate: integer-rounded total log-likelihood matches (R sum ≈ -4511.661).
+        @test round(sum(ll)) == round(sum(llR))
+
+        # Deterministic regimes reproduce R to machine precision:
+        full    = nu .== 4   # full purchase  → MVN density
+        allbut1 = nu .== 3   # all-but-one    → 1-D normal CDF
+        @test maximum(abs.(ll[full]    .- llR[full]))    < 1e-6
+        @test maximum(abs.(ll[allbut1] .- llR[allbut1])) < 1e-6
+
+        # Stochastic-CDF regimes (nu ∈ {1,2}) agree with R within Monte-Carlo noise:
+        @test abs(sum(ll) - sum(llR)) < 0.05
+
+        # Seeded determinism: same default seed → identical result.
+        ll2 = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
+        @test ll == ll2
+    end
 end
