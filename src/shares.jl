@@ -30,8 +30,9 @@ Returns an n x m matrix of estimated shares (column order = good order).
 """
 function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::AbstractVector;
                      quaids::Bool=false, demographics=nothing,
-                     price_index::Symbol=:translog, shares=nothing)::Matrix{Float64}
+                     price_index=:translog, shares=nothing)::Matrix{Float64}
 
+    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
     Lnp = Matrix{Float64}(prices)              # n x m
     n, m = size(Lnp)
     Lnw = Vector{Float64}(budget)              # length n

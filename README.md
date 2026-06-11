@@ -1,35 +1,78 @@
-# Censored Demand Systems — AIDS & QUAIDS
+# CensoredDemand.jl
 
-Cloud + MCP infrastructure to estimate censored Almost Ideal (AIDS) **and**
-Quadratic Almost Ideal (QUAIDS) demand systems by maximum likelihood, handling
-zero-expenditure (censored) observations via the Wales–Woodland likelihood.
+Maximum-likelihood estimation of **censored** demand systems — supporting **both** the linear
+**AIDS** (Almost Ideal Demand System) and the quadratic **QUAIDS** (Quadratic Almost Ideal Demand
+System), selected by a single `quaids` flag. Zero-expenditure (censored) households are handled via
+the Wales–Woodland likelihood.
+
+It is a faithful Julia port **and** extension of the R [`censoredAIDS`](https://github.com/noejn2/censoredAIDS)
+package (the method behind Nava & Dong 2022, *Taxing sugar-sweetened beverages in México*), validated
+to machine precision against the R results.
 
 ## Both AIDS and QUAIDS
 
-This package supports **both** demand systems from a single estimator, selected
-via the `quaids` flag:
+One estimator, two specifications, one consistent code path:
 
-- `quaids = false` → linear **AIDS** (Almost Ideal Demand System / AI)
-- `quaids = true`  → quadratic **QUAIDS** (Quadratic Almost Ideal Demand System / QUAI)
+- `quaids = false` → linear **AIDS / AI**
+- `quaids = true`  → quadratic **QUAIDS / QUAI**
 
-The same censored log-likelihood, elasticity, and estimation routines serve both
-specifications, so AIDS and QUAIDS results are produced by one consistent code path.
+## Install
 
-## Layout
+```julia
+using Pkg
+Pkg.develop(path = "/path/to/CensoredDemand")   # or Pkg.add(url = "…") once hosted
+```
 
-- `julia/CensoredDemand/` — the Julia estimation package (`CensoredDemand.jl`).
-- `mcp/` — MCP server fronting the estimator.
-- `aws/` — cloud job + storage infrastructure.
-- `scripts/` — orchestration and helper scripts.
+## Quick start
 
-## Status
+```julia
+using CensoredDemand
 
-Early scaffold. The Julia module loads and exposes stubs (`aids_shares`,
-`censored_loglike`, `censored_elasticity`, `estimate`) that throw until
-implemented. Method source of truth is the R `censoredAIDS` package; we port,
-we do not reinvent.
+# shares: n×m budget shares (zeros mark censoring); prices: n×m LOGGED prices;
+# budget: length-n LOGGED total expenditure; Z: optional n×t demographics.
 
-## More
+# Maximum-likelihood estimation (BHHH / Gauss–Newton; OPG covariance).
+res = estimate(shares, prices, budget; quaids = true, demographics = Z)
+res                       # pretty coefficient table (Base.show)
+coeftable(res)            # → DataFrame (name, coef, se, t, p)
 
-See [PLAN.md](PLAN.md) for the full project plan, architecture, and the win
-condition (Julia results must match the original R package numerically).
+# Price/income elasticities with delta-method SEs (optionally Slutsky-symmetric).
+el = censored_elasticity(prices, budget, res.params;
+                         quaids = true, demographics = Z, vcov = res.vcov,
+                         symmetry = true)
+elasticity_table(el)      # → tidy DataFrame
+
+# Simulate from known coefficients and verify the estimator recovers them.
+spec = res.spec
+mc = montecarlo(500, res.params, spec; reps = 20)   # bias / RMSE / SE-coverage
+```
+
+Speed tip for long runs: `estimate(...; fd_mode = :forward)` ≈ 2× faster per iteration (the final
+gradient + covariance stay central-accurate). Threading: launch Julia with `-t N` /
+`JULIA_NUM_THREADS=N` — the per-household likelihood loop is parallel and bit-identical to serial.
+
+## Capabilities & options
+
+The full API, every option (`price_index`, `floor_mode`, `symmetry`, `fd_mode`, parallelism, …),
+validation, key findings, and performance are documented in **[CAPABILITIES.md](CAPABILITIES.md)**.
+Options accept either a `Symbol` (`:translog`) or the matching `@enum` (`TRANSLOG`).
+
+## Correctness
+
+Two gates, both green: **R golden-fixture parity** (shares ~1e-16, censored log-likelihood at R's own
+integer tolerance, elasticities ~2e-8) **and** microeconomic theory identities (Engel / Cournot /
+homogeneity; Slutsky symmetry exactly imposable via `symmetry=true`). The estimator is also verified
+**consistent under its own data-generating process** via the simulation/Monte-Carlo recovery study.
+
+## Testing
+
+```julia
+using Pkg; Pkg.test()          # ~117 tests; use `julia -t8` for the threaded path
+```
+
+The R-derived golden-oracle fixtures live under `test/fixtures/` and are committed CSVs; the package
+has no runtime R dependency.
+
+## License
+
+[MIT](LICENSE) © Noé J Nava

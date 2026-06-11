@@ -84,10 +84,12 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
                           quaids::Bool = false, demographics = nothing,
                           seed::Integer = 20240530,
                           mc_points::Integer = 2000,
-                          floor_mode::Symbol = :additive_r,
+                          floor_mode = :additive_r,
                           parallel::Bool = true,
-                          price_index::Symbol = :translog)::Vector{Float64}
+                          price_index = :translog)::Vector{Float64}
 
+    floor_mode  = _floor_mode_sym(floor_mode)      # accept Symbol or FloorMode enum
+    price_index = _price_index_sym(price_index)    # accept Symbol or PriceIndex enum
     P = Matrix{Float64}(prices)
     n, m = size(P)
     S = Matrix{Float64}(shares)
@@ -141,8 +143,9 @@ function censored_loglike(shares::AbstractMatrix, prices::AbstractMatrix,
         end
 
         # ----: PARTIAL regimes — rearrange bought goods first :----
-        bght_index = findall(d[i, :])
-        zero_index = findall(.!d[i, :])
+        # (views + findall(!,·) avoid the row-copy / negated-array allocations; numerically identical.)
+        bght_index = findall(@view d[i, :])
+        zero_index = findall(!, @view d[i, :])
         index_arrn = vcat(bght_index, zero_index)
 
         sigma = full_sigma[index_arrn, index_arrn]

@@ -85,6 +85,28 @@ function _expected_obs(u::AbstractVector, eps_full::AbstractMatrix)
     return vec(mean(Uobs, dims = 1))                  # length m
 end
 
+# Minimum-distance Slutsky symmetrization of an m x (m+1) Marshallian elasticity matrix
+# `E` (price cols 1..m, income col m+1) at budget shares `w` (length m). Builds the
+# compensated εᶜ_ij = ε_ij + w_j·η_i, forms the substitution matrix S_ij = w_i·εᶜ_ij,
+# averages S ← (S+S')/2, and maps back to Marshallian. Income elasticities (col m+1) are
+# untouched. After this, w_i·εᶜ_ij is symmetric to machine precision. Returns a NEW matrix.
+function _symmetrize_marshallian(E::AbstractMatrix, w::AbstractVector)
+    m = length(w)
+    Es = Matrix{Float64}(E)                           # copy; rows = goods, cols = price..income
+    eta = Es[:, m + 1]
+    S = Matrix{Float64}(undef, m, m)                  # Slutsky substitution matrix
+    @inbounds for i in 1:m, jc in 1:m
+        epc = Es[i, jc] + w[jc] * eta[i]              # compensated price elasticity
+        S[i, jc] = w[i] * epc
+    end
+    Ssym = (S .+ S') ./ 2
+    @inbounds for i in 1:m, jc in 1:m
+        epc_sym = Ssym[i, jc] / w[i]                  # symmetric compensated
+        Es[i, jc] = epc_sym - w[jc] * eta[i]          # back to Marshallian
+    end
+    return Es
+end
+
 """
     censored_elasticity(prices, budget, params; quaids=false, demographics=nothing,
                         vcov, point=mean, reps=100000, epsilons=nothing,
@@ -128,9 +150,12 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
                              epsilons = nothing,
                              delta::Real = 1e-5,
                              rng = Random.MersenneTwister(20240530),
-                             price_index::Symbol = :translog,
-                             shares = nothing)
+                             price_index = :translog,
+                             shares = nothing,
+                             symmetry::Bool = false,
+                             share_names = nothing)
 
+    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
     P = Matrix{Float64}(prices)
     n, m = size(P)
     b = Vector{Float64}(budget)
@@ -284,52 +309,101 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
     end
     elasticities = permutedims(etas)                 # m x (m+1): rows=quantity, cols=price..income
 
+    # ----: Optional Slutsky symmetry (opt-in) :----
+    # Min-distance symmetrization of the compensated substitution matrix at the model's own
+    # expected shares E_Uobs. Off by default (R-faithful); see PLAN.md Change 3.
+    if symmetry
+        elasticities = _symmetrize_marshallian(elasticities, E_Uobs)
+    end
+
     # ----: Standard Errors (delta method) :----
     # For each good i, build dy (vd x (m+1)): per-parameter elasticity, then
     #   J = (dy - f)/delta, etavcov = J' (vcov[1:vd,1:vd]/n) J, se_i = sqrt(diag).
     V = Matrix{Float64}(vcov)[1:vd, 1:vd] ./ n
     se = Matrix{Float64}(undef, m, m + 1)
-    for i in 1:m
-        dy = Matrix{Float64}(undef, vd, m + 1)
 
-        # Income elasticity per parameter (variable = budget = EUobs_dxb[m+1]).
-        m_EUobs_dxb_inc = EUobs_dxb[m + 1]            # vd x m
+    if !symmetry
+        # Default path — byte-identical to the R-faithful SE block.
+        for i in 1:m
+            dy = Matrix{Float64}(undef, vd, m + 1)
+
+            # Income elasticity per parameter (variable = budget = EUobs_dxb[m+1]).
+            m_EUobs_dxb_inc = EUobs_dxb[m + 1]            # vd x m
+            for p in 1:vd
+                p1 = (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i]) / delta
+                p2_num = exp(muBudget) + 0.5 * delta
+                p2_den = EUobs_db[p, i] + 0.5 * (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i])
+                dy[p, m + 1] = p1 * (p2_num / p2_den) + 1
+            end
+
+            # Price elasticities per parameter. NOTE: R's p2_den divides the second term
+            # by delta (a quirk we reproduce verbatim), and applies a -1 only when i==j.
+            for jj in 1:m
+                m_EUobs_dxb_j = EUobs_dxb[jj]             # vd x m
+                for p in 1:vd
+                    p1 = (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
+                    p2_num = exp(muPrices[jj]) + 0.5 * delta
+                    p2_den = EUobs_db[p, i] +
+                             0.5 * (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
+                    val = p1 * (p2_num / p2_den)
+                    dy[p, jj] = (i == jj) ? (val - 1) : val
+                end
+            end
+
+            # f = expand_rVector(etas[i, ], dy): each column c filled with elasticities[i, c].
+            # J = (dy - f)/delta.
+            J = Matrix{Float64}(undef, vd, m + 1)
+            for c in 1:(m + 1)
+                fc = elasticities[i, c]
+                for p in 1:vd
+                    J[p, c] = (dy[p, c] - fc) / delta
+                end
+            end
+
+            etavcov = transpose(J) * V * J               # (m+1) x (m+1)
+            for c in 1:(m + 1)
+                se[i, c] = sqrt(etavcov[c, c])
+            end
+        end
+    else
+        # Symmetry-constrained path: build the FULL perturbed Marshallian matrix per
+        # parameter (same R-faithful formulas), symmetrize each with its perturbed shares,
+        # then the delta method on the symmetrized elasticities.
+        Ep_all = Vector{Matrix{Float64}}(undef, vd)
         for p in 1:vd
-            p1 = (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i]) / delta
-            p2_num = exp(muBudget) + 0.5 * delta
-            p2_den = EUobs_db[p, i] + 0.5 * (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i])
-            dy[p, m + 1] = p1 * (p2_num / p2_den) + 1
-        end
-
-        # Price elasticities per parameter. NOTE: R's p2_den divides the second term
-        # by delta (a quirk we reproduce verbatim), and applies a -1 only when i==j.
-        for jj in 1:m
-            m_EUobs_dxb_j = EUobs_dxb[jj]             # vd x m
-            for p in 1:vd
-                p1 = (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
-                p2_num = exp(muPrices[jj]) + 0.5 * delta
-                p2_den = EUobs_db[p, i] +
-                         0.5 * (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
-                val = p1 * (p2_num / p2_den)
-                dy[p, jj] = (i == jj) ? (val - 1) : val
+            Ep = Matrix{Float64}(undef, m, m + 1)
+            wp = EUobs_db[p, :]                            # perturbed expected shares (length m)
+            for i in 1:m
+                p1 = (EUobs_db[p, i] - EUobs_dxb[m + 1][p, i]) / delta
+                p2_num = exp(muBudget) + 0.5 * delta
+                p2_den = EUobs_db[p, i] + 0.5 * (EUobs_db[p, i] - EUobs_dxb[m + 1][p, i])
+                Ep[i, m + 1] = p1 * (p2_num / p2_den) + 1
+                for jj in 1:m
+                    p1j = (EUobs_db[p, i] - EUobs_dxb[jj][p, i]) / delta
+                    p2_numj = exp(muPrices[jj]) + 0.5 * delta
+                    p2_denj = EUobs_db[p, i] +
+                              0.5 * (EUobs_db[p, i] - EUobs_dxb[jj][p, i]) / delta
+                    val = p1j * (p2_numj / p2_denj)
+                    Ep[i, jj] = (i == jj) ? (val - 1) : val
+                end
             end
+            Ep_all[p] = _symmetrize_marshallian(Ep, wp)
         end
-
-        # f = expand_rVector(etas[i, ], dy): each column c filled with elasticities[i, c].
-        # J = (dy - f)/delta.
-        J = Matrix{Float64}(undef, vd, m + 1)
-        for c in 1:(m + 1)
-            fc = elasticities[i, c]
-            for p in 1:vd
-                J[p, c] = (dy[p, c] - fc) / delta
+        for i in 1:m
+            J = Matrix{Float64}(undef, vd, m + 1)
+            for c in 1:(m + 1)
+                fc = elasticities[i, c]                   # symmetrized base
+                for p in 1:vd
+                    J[p, c] = (Ep_all[p][i, c] - fc) / delta
+                end
             end
-        end
-
-        etavcov = transpose(J) * V * J               # (m+1) x (m+1)
-        for c in 1:(m + 1)
-            se[i, c] = sqrt(etavcov[c, c])
+            etavcov = transpose(J) * V * J
+            for c in 1:(m + 1)
+                se[i, c] = sqrt(etavcov[c, c])
+            end
         end
     end
 
-    return (elasticities = elasticities, se = se, e_uobs = E_Uobs)
+    sn = share_names === nothing ? ["good$(i)" for i in 1:m] : String.(share_names)
+    return ElasticityResult(elasticities, se, E_Uobs, symmetry, sn)
 end

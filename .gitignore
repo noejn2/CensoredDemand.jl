@@ -1,23 +1,17 @@
 # macOS
 .DS_Store
 
-# Python
-__pycache__/
-*.py[cod]
+# Julia — library convention: do not commit the Manifest
+Manifest.toml
 
-# Terraform / AWS
-/aws/.terraform
-/aws/.terraform/
-*.tfstate
-*.tfstate.*
-*.tfvars.local
-
-# Julia build artifacts / coverage
+# Coverage / build artifacts
 *.cov
 *.jl.cov
 *.jl.*.cov
-/julia/**/deps/build.log
-docs/build/
+/deps/build.log
+/docs/build/
 
-# NOTE: Manifest.toml is intentionally NOT ignored — we keep it committed
-# for reproducible environments.
+# Publication pipeline — separate downstream env (own Project/Manifest), plus
+# ~32 MB of survey data / figures / build artifacts. NOT part of the registered
+# package; kept out of the repo entirely.
+/pub/
