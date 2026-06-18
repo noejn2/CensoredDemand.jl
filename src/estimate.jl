@@ -223,7 +223,10 @@ finite-difference score is clean.
                    (LA-AIDS Stone index — predetermined, linearizes the share equations).
 - `floor_mode`   : `:additive_r`/`ADDITIVE_R` (default, R-faithful) or `:guard`/`GUARD`.
 - `loglike`      : `:censored` (default, Wales–Woodland corner-solution likelihood), `:naive`
-                   (uncensored Gaussian — ignores truncation entirely), or `:naive_censored`
+                   (uncensored Gaussian — ignores truncation entirely), `:sy` (Shonkwiler–Yen
+                   two-step: probit first stage, then the Gaussian system on the corrected mean
+                   Φ̂·w̄(θ)+δ·φ̂; params gain a δ block — `[θ…, δ (m−1), σ]`; pass the first
+                   stage via `sy_stage1` or let it be computed internally), or `:naive_censored`
                    (per-equation Tobit — treats zeros as censored latent demand, no reallocation).
                    The two `naive*` options are the misspecified estimators the MC study compares.
 - `maxiters`     : maximum BHHH iterations.
@@ -260,12 +263,13 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   price_index = :translog,
                   loglike::Symbol = :censored,
                   free = nothing,
+                  sy_stage1 = nothing,
                   share_names = nothing, demographic_names = nothing)
 
     floor_mode  = _floor_mode_sym(floor_mode)      # accept Symbol or FloorMode enum
     price_index = _price_index_sym(price_index)    # accept Symbol or PriceIndex enum
-    loglike in (:censored, :naive, :naive_censored) ||
-        error("loglike must be :censored, :naive, or :naive_censored, got :$loglike")
+    loglike in (:censored, :naive, :naive_censored, :sy) ||
+        error("loglike must be :censored, :naive, :naive_censored, or :sy, got :$loglike")
 
     P = Matrix{Float64}(prices)
     n, m = size(P)
@@ -284,6 +288,16 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
         theta -> naive_censored_loglike(shares, P, budget, theta;
                                         quaids = quaids, demographics = demographics,
                                         parallel = parallel, price_index = price_index)
+    elseif loglike === :sy
+        # Shonkwiler–Yen: the probit first stage is data, not parameters — computed once (or
+        # supplied via `sy_stage1`) and held fixed through the step-2 optimization, exactly as
+        # the two-step estimator is used in practice.
+        Phi, phi = sy_stage1 === nothing ?
+                   sy_first_stage(shares, P, budget, demographics) : sy_stage1
+        theta -> sy_loglike(shares, P, budget, theta;
+                            quaids = quaids, demographics = demographics,
+                            Phi = Phi, phi = phi,
+                            parallel = parallel, price_index = price_index)
     else
         theta -> censored_loglike(shares, P, budget, theta;
                                   quaids = quaids, demographics = demographics,
@@ -292,10 +306,19 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
     end
 
     # --- starting values: principled LA-AIDS start; verify viability before optimizing ---
-    theta0 = start === nothing ?
-             initial_values(shares, P, budget; quaids = quaids, demographics = demographics) :
-             collect(float.(start))
-    start_check = check_start(theta0, shares, P, budget;
+    # (:sy carries an extra δ block, so a default start splices δ = 0 into the LA-AIDS start and
+    #  the standard-layout `check_start` is skipped.)
+    theta0 = if start !== nothing
+        collect(float.(start))
+    elseif loglike === :sy
+        iv = initial_values(shares, P, budget; quaids = quaids, demographics = demographics)
+        j = Int(0.5 * (m - 1) * m)
+        vcat(iv[1:(end - j)], zeros(m - 1), iv[(end - j + 1):end])
+    else
+        initial_values(shares, P, budget; quaids = quaids, demographics = demographics)
+    end
+    start_check = loglike === :sy ? (ok = true, issues = String[]) :
+                  check_start(theta0, shares, P, budget;
                               quaids = quaids, demographics = demographics)
     if check && !start_check.ok
         @warn "estimate: starting values may be inappropriate" issues = start_check.issues

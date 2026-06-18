@@ -15,6 +15,7 @@ using MvNormalCDF
 using DataFrames
 
 export aids_shares, censored_loglike, naive_loglike, naive_censored_loglike,
+       sy_loglike, sy_first_stage,
        censored_elasticity, estimate,
        initial_values, check_start,
        # ---- typed surface (Change 1) ----
@@ -56,6 +57,13 @@ include("naive.jl")
 # Tobit with no Wales–Woodland reallocation. Used by estimate(...; loglike=:naive_censored) and the
 # Monte-Carlo study that contrasts the corner-solution vs censored-data treatments of zeros.
 include("naive_censored.jl")
+
+# ---- Shonkwiler–Yen (1999) two-step likelihood ----
+# The most common practitioner treatment of zeros: a per-good probit first stage, then a Gaussian
+# system on the censoring-corrected mean Φ̂·w̄(θ) + δ·φ̂ over all households. Parameter layout
+# [θ…, δ (m−1), σ]; with Φ≡1, φ≡0, δ=0 it equals naive_loglike exactly (asserted in the tests).
+# Used by estimate(...; loglike=:sy) and the Monte-Carlo estimator comparison.
+include("sy.jl")
 
 # ---- Simulation-based elasticities ----
 # Faithful port of censoredAIDS::censoredElasticity (winner of a 2-way judge

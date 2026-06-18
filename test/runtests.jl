@@ -524,4 +524,56 @@ end
         @test norm(resD.params[1:nsh] .- start_d[1:nsh]) > 1e-3   # share params DO move (the whole point)
         @test resD.loglike >= ll_d0 - 1e-6                     # and the objective improves
     end
+
+    @testset "Shonkwiler–Yen (two-step) likelihood" begin
+        td, h = readcsv(joinpath(FIX, "testing_data.csv"))
+        scol(name) = Float64.(td[:, findfirst(==(name), h)])
+        S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))   # real censored shares
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])  # 33
+        params_sy = vcat(params[1:27], zeros(3), params[28:33])    # [θ, δ=0, σ] (36)
+
+        # IDENTITY: with Φ ≡ 1, φ ≡ 0 and δ = 0 the SY objective IS the naive Gaussian objective.
+        ll_sy0 = sy_loglike(S, P, b, params_sy; quaids = true, demographics = Z,
+                            Phi = ones(615, 3), phi = zeros(615, 3))
+        ll_nv  = naive_loglike(S, P, b, params; quaids = true, demographics = Z)
+        @test maximum(abs.(ll_sy0 .- ll_nv)) < 1e-12
+
+        # First stage: probits separate buyers from non-buyers; degenerate goods fall back cleanly.
+        Phi, phi = sy_first_stage(S, P, b, Z)
+        @test size(Phi) == (615, 3) && size(phi) == (615, 3)
+        @test all(0 .< Phi .<= 1) && all(phi .>= 0)
+        for g in 1:3
+            buyers = S[:, g] .!= 0.0
+            if any(buyers) && any(.!buyers)
+                @test mean(Phi[buyers, g]) > mean(Phi[.!buyers, g])
+            end
+        end
+
+        # The corrected likelihood is finite, distinct from naive on censored data, thread-stable.
+        ll_sy = sy_loglike(S, P, b, params_sy; quaids = true, demographics = Z, Phi = Phi, phi = phi)
+        @test length(ll_sy) == 615 && all(isfinite, ll_sy)
+        @test abs(sum(ll_sy) - sum(ll_nv)) > 1.0
+        @test sy_loglike(S, P, b, params_sy; quaids = true, demographics = Z,
+                         Phi = Phi, phi = phi, parallel = false) == ll_sy
+
+        # estimate(...; loglike = :sy): runs, carries the δ block, improves its own objective.
+        idx = 1:80
+        Ss, Ps, bs2, Zs = S[idx, :], P[idx, :], b[idx], Z[idx, :]
+        iv = initial_values(Ss, Ps, bs2; quaids = true, demographics = Zs)
+        start_sy = vcat(iv[1:27], zeros(3), iv[28:33])
+        Phis, phis = sy_first_stage(Ss, Ps, bs2, Zs)
+        ll0 = sum(sy_loglike(Ss, Ps, bs2, start_sy; quaids = true, demographics = Zs,
+                             Phi = Phis, phi = phis))
+        resSY = estimate(Ss, Ps, bs2; quaids = true, demographics = Zs, start = start_sy,
+                         sy_stage1 = (Phis, phis), loglike = :sy, maxiters = 8, fd_mode = :forward)
+        @test resSY isa EstimationResult
+        @test length(resSY.params) == 36
+        @test resSY.loglike >= ll0 - 1e-6
+        @test all(isfinite, resSY.se) && all(resSY.se .>= 0.0)
+
+        # Default-start path (δ spliced internally; first stage computed internally) also runs.
+        resSY2 = estimate(Ss, Ps, bs2; quaids = true, demographics = Zs,
+                          loglike = :sy, maxiters = 2, fd_mode = :forward, check = false)
+        @test length(resSY2.params) == 36
+    end
 end

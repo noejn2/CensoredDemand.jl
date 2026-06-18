@@ -83,10 +83,13 @@ arguments accept either a `Symbol` or the matching `@enum` value.
 - **Two DGPs, both the corner-solution truth; the misspecifications are *estimation* choices.** The
   data are generated ONLY as truncated AIDS / QUAIDS (Amemiya–Tobin / Wales–Woodland corner solutions,
   translog index, demographics). The estimator-comparison study (`11_mc_estimators.jl`) then re-fits
-  each dataset five ways and reads the elasticity bias against the `correct` benchmark:
+  each dataset several ways and reads the elasticity bias against the `correct` benchmark:
   `naive` (ignores the zeros), `naive_censored` (treats the zeros as a **Tobit** censoring problem —
   latent demand unobserved at 0, per-equation, **no reallocation** — the wrong *statistical* treatment
-  of genuine corners), `stone` (wrong price index), `dropdemos` (omits demographics).
+  of genuine corners), `sy` (the **Shonkwiler–Yen 1999 two-step**: per-good probit first stage
+  `sy_first_stage`, then the Gaussian system on the corrected mean Φ̂·w̄(θ)+δ·φ̂ via `sy_loglike`,
+  `estimate(...; loglike=:sy)`; params gain a δ block `[θ…, δ (m−1), σ]`), plus earlier-draft
+  variants (`stone`, `dropdemos`) kept in the cached results but no longer in the paper.
 
 ## 5. Performance
 
