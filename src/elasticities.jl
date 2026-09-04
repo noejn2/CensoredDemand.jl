@@ -288,16 +288,16 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
     etas = Matrix{Float64}(undef, m + 1, m)
     for i in 1:m
         # Income elasticity (uses budget column = m+1 of m_EUobs_dx).
-        p1 = (E_Uobs[i] - m_EUobs_dx[i, m + 1]) / delta
+        p1 = (m_EUobs_dx[i, m + 1] - E_Uobs[i]) / delta
         p2_num = exp(muBudget) + 0.5 * delta
-        p2_den = E_Uobs[i] + 0.5 * (E_Uobs[i] - m_EUobs_dx[i, m + 1])
+        p2_den = E_Uobs[i] + 0.5 * (m_EUobs_dx[i, m + 1] - E_Uobs[i])
         income_eta = p1 * (p2_num / p2_den) + 1
 
         # Price elasticities.
         for jj in 1:m
-            p1j = (E_Uobs[i] - m_EUobs_dx[i, jj]) / delta
+            p1j = (m_EUobs_dx[i, jj] - E_Uobs[i]) / delta
             p2_numj = exp(muPrices[jj]) + 0.5 * delta
-            p2_denj = E_Uobs[i] + 0.5 * (E_Uobs[i] - m_EUobs_dx[i, jj])
+            p2_denj = E_Uobs[i] + 0.5 * (m_EUobs_dx[i, jj] - E_Uobs[i])
             etas[jj, i] = p1j * (p2_numj / p2_denj)
         end
         etas[m + 1, i] = income_eta
@@ -330,9 +330,9 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
             # Income elasticity per parameter (variable = budget = EUobs_dxb[m+1]).
             m_EUobs_dxb_inc = EUobs_dxb[m + 1]            # vd x m
             for p in 1:vd
-                p1 = (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i]) / delta
+                p1 = (m_EUobs_dxb_inc[p, i] - EUobs_db[p, i]) / delta
                 p2_num = exp(muBudget) + 0.5 * delta
-                p2_den = EUobs_db[p, i] + 0.5 * (EUobs_db[p, i] - m_EUobs_dxb_inc[p, i])
+                p2_den = EUobs_db[p, i] + 0.5 * (m_EUobs_dxb_inc[p, i] - EUobs_db[p, i])
                 dy[p, m + 1] = p1 * (p2_num / p2_den) + 1
             end
 
@@ -341,10 +341,10 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
             for jj in 1:m
                 m_EUobs_dxb_j = EUobs_dxb[jj]             # vd x m
                 for p in 1:vd
-                    p1 = (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
+                    p1 = (m_EUobs_dxb_j[p, i] - EUobs_db[p, i]) / delta
                     p2_num = exp(muPrices[jj]) + 0.5 * delta
                     p2_den = EUobs_db[p, i] +
-                             0.5 * (EUobs_db[p, i] - m_EUobs_dxb_j[p, i]) / delta
+                             0.5 * (m_EUobs_dxb_j[p, i] - EUobs_db[p, i]) / delta
                     val = p1 * (p2_num / p2_den)
                     dy[p, jj] = (i == jj) ? (val - 1) : val
                 end
@@ -374,15 +374,15 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
             Ep = Matrix{Float64}(undef, m, m + 1)
             wp = EUobs_db[p, :]                            # perturbed expected shares (length m)
             for i in 1:m
-                p1 = (EUobs_db[p, i] - EUobs_dxb[m + 1][p, i]) / delta
+                p1 = (EUobs_dxb[m + 1][p, i] - EUobs_db[p, i]) / delta
                 p2_num = exp(muBudget) + 0.5 * delta
-                p2_den = EUobs_db[p, i] + 0.5 * (EUobs_db[p, i] - EUobs_dxb[m + 1][p, i])
+                p2_den = EUobs_db[p, i] + 0.5 * (EUobs_dxb[m + 1][p, i] - EUobs_db[p, i])
                 Ep[i, m + 1] = p1 * (p2_num / p2_den) + 1
                 for jj in 1:m
-                    p1j = (EUobs_db[p, i] - EUobs_dxb[jj][p, i]) / delta
+                    p1j = (EUobs_dxb[jj][p, i] - EUobs_db[p, i]) / delta
                     p2_numj = exp(muPrices[jj]) + 0.5 * delta
                     p2_denj = EUobs_db[p, i] +
-                              0.5 * (EUobs_db[p, i] - EUobs_dxb[jj][p, i]) / delta
+                              0.5 * (EUobs_dxb[jj][p, i] - EUobs_db[p, i]) / delta
                     val = p1j * (p2_numj / p2_denj)
                     Ep[i, jj] = (i == jj) ? (val - 1) : val
                 end
