@@ -15,34 +15,11 @@
 
 using LinearAlgebra
 
-"""
-    aids_shares(prices, budget, params; quaids=false, demographics=nothing) -> Matrix{Float64}
-
-Compute the AIDS/QUAIDS demand share equations.
-
-- `prices`        : n x m matrix of LOGGED prices.
-- `budget`        : length-n vector of LOGGED total expenditure.
-- `params`        : parameter vector (see module header for ordering).
-- `quaids`        : if true, include the quadratic (QUAIDS) term.
-- `demographics`  : `nothing` for no-demographics mode, otherwise an n x t matrix.
-
-Returns an n x m matrix of estimated shares (column order = good order).
-"""
-function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::AbstractVector;
-                     quaids::Bool=false, demographics=nothing,
-                     price_index=:translog, shares=nothing)::Matrix{Float64}
-
-    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
-    Lnp = Matrix{Float64}(prices)              # n x m
-    n, m = size(Lnp)
-    Lnw = Vector{Float64}(budget)              # length n
-    p   = Vector{Float64}(params)
-
-    has_dems = demographics !== nothing
-    t = has_dems ? size(demographics, 2) : 0
-
-    # ----: Reconstruct full parameter blocks :----
-
+# Unpack the packed MODEL parameter vector `p` (no sigma block) into the full, adding-up
+# completed blocks: alpha (m), beta (m), gamma (m x m, symmetric), theta (m x t or nothing),
+# lambda (m or nothing). Shared by aids_shares and the closed-form elasticities; the arithmetic
+# is the original inline block of aids_shares, moved verbatim (R-parity fixtures untouched).
+function _unpack_params(p::AbstractVector, m::Integer, t::Integer; quaids::Bool, has_dems::Bool)
     # Alpha: length m-1 -> append (1 - sum)
     Alpha = p[1:(m - 1)]
     full_alpha = vcat(Alpha, 1.0 - sum(Alpha))             # length m
@@ -106,6 +83,39 @@ function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::Abs
         Lambda = p[(nn2 + 1):(nn2 + m - 1)]
         full_lambda = vcat(Lambda, -sum(Lambda))           # length m
     end
+
+    return full_alpha, full_beta, full_gamma, full_theta, full_lambda
+end
+
+"""
+    aids_shares(prices, budget, params; quaids=false, demographics=nothing) -> Matrix{Float64}
+
+Compute the AIDS/QUAIDS demand share equations.
+
+- `prices`        : n x m matrix of LOGGED prices.
+- `budget`        : length-n vector of LOGGED total expenditure.
+- `params`        : parameter vector (see module header for ordering).
+- `quaids`        : if true, include the quadratic (QUAIDS) term.
+- `demographics`  : `nothing` for no-demographics mode, otherwise an n x t matrix.
+
+Returns an n x m matrix of estimated shares (column order = good order).
+"""
+function aids_shares(prices::AbstractMatrix, budget::AbstractVector, params::AbstractVector;
+                     quaids::Bool=false, demographics=nothing,
+                     price_index=:translog, shares=nothing)::Matrix{Float64}
+
+    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
+    Lnp = Matrix{Float64}(prices)              # n x m
+    n, m = size(Lnp)
+    Lnw = Vector{Float64}(budget)              # length n
+    p   = Vector{Float64}(params)
+
+    has_dems = demographics !== nothing
+    t = has_dems ? size(demographics, 2) : 0
+
+    # ----: Reconstruct full parameter blocks :----
+    full_alpha, full_beta, full_gamma, full_theta, full_lambda =
+        _unpack_params(p, m, t; quaids = quaids, has_dems = has_dems)
 
     # ----: Price index (per row) :----
     # `:translog` (default) = full QUAIDS index ln a(p) = p'α + 0.5 p'Γp (nonlinear in α,Γ).

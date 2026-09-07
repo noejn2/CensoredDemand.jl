@@ -110,10 +110,19 @@ end
 """
     censored_elasticity(prices, budget, params; quaids=false, demographics=nothing,
                         vcov, point=mean, reps=100000, epsilons=nothing,
-                        delta=1e-5, rng=Random.MersenneTwister(20240530))
-        -> NamedTuple(elasticities, se, e_uobs)
+                        delta=1e-5, rng=Random.MersenneTwister(20240530),
+                        method=:finite_difference)
+        -> ElasticityResult(elasticities, se, e_uobs, symmetric, share_names)
 
 Simulation-based censored AIDS/QUAIDS demand elasticities with delta-method SEs.
+
+- `method`        : `:finite_difference` (default; the R algorithm below) or `:closed_form`.
+                    The closed form evaluates the exact derivative of the expected observed
+                    share on the same draws, in one pass, with no step size, and its
+                    delta-method SEs use the exact parameter gradient (pathwise plus the
+                    regime-boundary term) with `vcov[1:vd,1:vd]` as the sampling variance
+                    of the model parameters (NOT divided by n). See the section
+                    "Closed-form derivatives" at the end of this file.
 
 - `prices`        : n x m matrix of LOGGED prices.
 - `budget`        : length-n vector of LOGGED total expenditure.
@@ -153,66 +162,22 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
                              price_index = :translog,
                              shares = nothing,
                              symmetry::Bool = false,
-                             share_names = nothing)
+                             share_names = nothing,
+                             method::Symbol = :finite_difference)
 
-    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
-    P = Matrix{Float64}(prices)
-    n, m = size(P)
-    b = Vector{Float64}(budget)
-    pars = Vector{Float64}(params)
+    method in (:finite_difference, :closed_form) ||
+        error("censored_elasticity: method must be :finite_difference or :closed_form, got :$method")
+    st = _elasticity_setup(prices, budget, params; demographics = demographics, point = point,
+                           reps = reps, epsilons = epsilons, rng = rng,
+                           price_index = price_index, shares = shares)
+    (; n, m, has_dems, muPrices, muBudget, muDemogs, muShares, params_model, vd, Sigma, eps_full) = st
+    price_index = st.price_index
+    sn = share_names === nothing ? ["good$(i)" for i in 1:m] : String.(share_names)
 
-    has_dems = demographics !== nothing
-    t = has_dems ? size(demographics, 2) : 0
-
-    j = Int(0.5 * (m - 1) * m)                       # number of sigma params
-
-    # ----: Evaluation point (column means via `point`) :----
-    muPrices = [Float64(point(@view P[:, k])) for k in 1:m]
-    muBudget = Float64(point(b))
-    muDemogs = has_dems ? [Float64(point(@view demographics[:, k])) for k in 1:t] :
-                          Float64[]
-
-    # Stone price index (if requested) uses the point (mean) of the OBSERVED shares.
-    muShares = nothing
-    if price_index === :stone
-        shares === nothing && error("censored_elasticity: price_index=:stone requires observed `shares`")
-        Sh = Matrix{Float64}(shares)
-        muShares = [Float64(point(@view Sh[:, k])) for k in 1:m]
+    if method === :closed_form
+        E, se_cf, s, _ = _closed_form_elasticity(st, vcov; quaids = quaids, symmetry = symmetry)
+        return ElasticityResult(E, se_cf, s, symmetry, sn)
     end
-
-    # ----: Model params (drop the trailing sigma block) :----
-    nparam = length(pars)
-    sigma_block = pars[(nparam - j + 1):nparam]
-    params_model = pars[1:(nparam - j)]
-    vd = length(params_model)                        # vcov dims
-
-    # ----: Sigma & error simulations :----
-    # S is (m-1)x(m-1), upper.tri(diag=TRUE) filled COLUMN-MAJOR with sigma_block.
-    S = zeros(Float64, m - 1, m - 1)
-    let k = 1
-        for jj in 1:(m - 1)
-            for ii in 1:jj
-                S[ii, jj] = sigma_block[k]
-                k += 1
-            end
-        end
-    end
-    Sigma = transpose(S) * S                         # (m-1) x (m-1)
-
-    # epsilons: reps x (m-1). Injected verbatim if provided, else drawn N(0, Sigma).
-    if epsilons === nothing
-        # rmvnorm with method="chol": draws %*% chol(Sigma), where R's chol returns
-        # an UPPER-triangular factor R with R'R = Sigma. So eps = Z * R, Z ~ N(0,I).
-        Rchol = cholesky(Symmetric(Sigma)).U          # upper factor, R'R = Sigma
-        Z = randn(rng, reps, m - 1)
-        eps_mm1 = Z * Rchol
-    else
-        eps_mm1 = Matrix{Float64}(epsilons)
-        @assert size(eps_mm1) == (reps, m - 1) "epsilons must be reps x (m-1)"
-    end
-
-    # cbind(epsilons, -rowSums(epsilons)) -> reps x m
-    eps_full = hcat(eps_mm1, -vec(sum(eps_mm1, dims = 2)))
 
     # ----: E(X, b) -- expected share without disturbance :----
     U = _mu_shares(muPrices, muBudget, muDemogs, params_model;
@@ -404,6 +369,262 @@ function censored_elasticity(prices::AbstractMatrix, budget::AbstractVector,
         end
     end
 
-    sn = share_names === nothing ? ["good$(i)" for i in 1:m] : String.(share_names)
     return ElasticityResult(elasticities, se, E_Uobs, symmetry, sn)
+end
+
+# Evaluation point, model/sigma split, Sigma and the reps x m error draws shared by both methods
+# (moved verbatim from censored_elasticity; the arithmetic is unchanged).
+function _elasticity_setup(prices::AbstractMatrix, budget::AbstractVector, params::AbstractVector;
+                           demographics, point, reps, epsilons, rng, price_index, shares)
+    price_index = _price_index_sym(price_index)   # accept Symbol or PriceIndex enum
+    P = Matrix{Float64}(prices)
+    n, m = size(P)
+    b = Vector{Float64}(budget)
+    pars = Vector{Float64}(params)
+
+    has_dems = demographics !== nothing
+    t = has_dems ? size(demographics, 2) : 0
+
+    j = Int(0.5 * (m - 1) * m)                       # number of sigma params
+
+    # ----: Evaluation point (column means via `point`) :----
+    muPrices = [Float64(point(@view P[:, k])) for k in 1:m]
+    muBudget = Float64(point(b))
+    muDemogs = has_dems ? [Float64(point(@view demographics[:, k])) for k in 1:t] :
+                          Float64[]
+
+    # Stone price index (if requested) uses the point (mean) of the OBSERVED shares.
+    muShares = nothing
+    if price_index === :stone
+        shares === nothing && error("censored_elasticity: price_index=:stone requires observed `shares`")
+        Sh = Matrix{Float64}(shares)
+        muShares = [Float64(point(@view Sh[:, k])) for k in 1:m]
+    end
+
+    # ----: Model params (drop the trailing sigma block) :----
+    nparam = length(pars)
+    sigma_block = pars[(nparam - j + 1):nparam]
+    params_model = pars[1:(nparam - j)]
+    vd = length(params_model)                        # vcov dims
+
+    # ----: Sigma & error simulations :----
+    # S is (m-1)x(m-1), upper.tri(diag=TRUE) filled COLUMN-MAJOR with sigma_block.
+    S = zeros(Float64, m - 1, m - 1)
+    let k = 1
+        for jj in 1:(m - 1)
+            for ii in 1:jj
+                S[ii, jj] = sigma_block[k]
+                k += 1
+            end
+        end
+    end
+    Sigma = transpose(S) * S                         # (m-1) x (m-1)
+
+    # epsilons: reps x (m-1). Injected verbatim if provided, else drawn N(0, Sigma).
+    if epsilons === nothing
+        # rmvnorm with method="chol": draws %*% chol(Sigma), where R's chol returns
+        # an UPPER-triangular factor R with R'R = Sigma. So eps = Z * R, Z ~ N(0,I).
+        Rchol = cholesky(Symmetric(Sigma)).U          # upper factor, R'R = Sigma
+        Z = randn(rng, reps, m - 1)
+        eps_mm1 = Z * Rchol
+    else
+        eps_mm1 = Matrix{Float64}(epsilons)
+        @assert size(eps_mm1) == (reps, m - 1) "epsilons must be reps x (m-1)"
+    end
+
+    # cbind(epsilons, -rowSums(epsilons)) -> reps x m
+    eps_full = hcat(eps_mm1, -vec(sum(eps_mm1, dims = 2)))
+
+    return (n = n, m = m, t = t, has_dems = has_dems, price_index = price_index,
+            muPrices = muPrices, muBudget = muBudget, muDemogs = muDemogs, muShares = muShares,
+            params_model = params_model, vd = vd, Sigma = Sigma, eps_full = eps_full)
+end
+
+# ============================================================================
+# Closed-form derivatives of the expected observed shares (method = :closed_form).
+#
+# Latent shares S* = U(p, w, z) + ε, observed S_i = S*_i 1{S*_i > 0} / T with T = Σ_{j∈B} S*_j
+# and B = {j : S*_j > 0}. For s_i = E[S_i] and v ∈ {ln p_k, ln w} with d_j = ∂U_j/∂v,
+#     ∂s_i/∂v = E[ 1{i∈B} (d_i − S_i Σ_{j∈B} d_j) / T ],
+# evaluated on the draws used for s_i itself: one pass, no perturbation, no step size
+# (Nava 2026, "Closed-form elasticities for the censored QUAIDS", Proposition 1). Then
+#     e_ik = (∂s_i/∂ln p_k)/s_i − δ_ik,   η_i = (∂s_i/∂ln w)/s_i + 1,
+# the limit Δ → 0 of the finite-difference scheme above. Engel and Cournot aggregation and
+# homogeneity hold exactly, draw by draw.
+#
+# Delta-method SEs use the exact gradient of (s, ∂s/∂ln p, ∂s/∂ln w) in the model parameters θ
+# (draws held fixed): a pathwise part (B fixed) plus a boundary part from draws that switch
+# purchase regime, Σ_j f_j E[Δ_j g | S*_j = 0] ∂U_j/∂θ, with f_j the density of S*_j at zero and
+# the conditional expectation taken on the same draws projected onto {S*_j = 0} (ibid.,
+# Proposition 2). The θ-Jacobians of the smooth latent functions (U, D, Dw) are central
+# differences with relative step 1e-6; everything else is exact.
+# ============================================================================
+
+# Latent mean shares U (m), D[i,k] = ∂U_i/∂ln p_k (m x m), Dw[i] = ∂U_i/∂ln w (m) at one point,
+# for the package's share equations (demographics in the expenditure slope):
+#   U_i = α_i + Σ_l γ_il ln p_l + (β_i + θ_i'z) x + λ_i x²/b(p),  x = ln w − ln a(p),  b(p) = Π p_l^β_l.
+# :translog  ∂ln a/∂ln p_k = α_k + Σ_l γ_kl ln p_l;  :stone  ∂ln P*/∂ln p_k = w̄_k (predetermined).
+function _latent_derivs(lnp::Vector{Float64}, lnw::Float64, z::Vector{Float64},
+                        pm::Vector{Float64}; quaids::Bool, has_dems::Bool,
+                        price_index::Symbol, mu_shares)
+    m = length(lnp); t = has_dems ? length(z) : 0
+    α, β, Γ, Θ, λ = _unpack_params(pm, m, t; quaids = quaids, has_dems = has_dems)
+    bz = has_dems ? β .+ Θ * z : β                       # β_i + θ_i'z
+    Gp = Γ * lnp
+    if price_index === :stone
+        a = Vector{Float64}(mu_shares)
+        lna = dot(a, lnp)
+    else
+        a = α .+ Gp
+        lna = dot(α, lnp) + 0.5 * dot(lnp, Gp)
+    end
+    x   = lnw - lna
+    bp  = exp(dot(β, lnp))
+    lam = quaids ? λ : zeros(m)
+    U  = α .+ Gp .+ bz .* x .+ lam .* (x * x / bp)
+    Dw = bz .+ lam .* (2x / bp)
+    D  = Γ .- Dw * a' .- (x * x / bp) .* (lam * β')
+    return U, D, Dw
+end
+
+# Central-difference Jacobians of (U, D, Dw) in the vd model parameters: JU (m x vd),
+# JD (m x m x vd), JDw (m x vd). The latent functions are smooth and cheap, so this is exact
+# to ~1e-10; vd = 0 (no SEs wanted) returns empty arrays.
+function _latent_jacobians(lnp, lnw, z, pm; vd::Int = length(pm), kw...)
+    m = length(lnp)
+    JU = zeros(m, vd); JD = zeros(m, m, vd); JDw = zeros(m, vd)
+    for q in 1:vd
+        h = 1e-6 * max(1.0, abs(pm[q]))
+        pp = copy(pm)
+        pp[q] += h;  Up, Dp, Dwp = _latent_derivs(lnp, lnw, z, pp; kw...)
+        pp[q] -= 2h; Um, Dm, Dwm = _latent_derivs(lnp, lnw, z, pp; kw...)
+        JU[:, q] = (Up .- Um) ./ (2h); JD[:, :, q] = (Dp .- Dm) ./ (2h); JDw[:, q] = (Dwp .- Dwm) ./ (2h)
+    end
+    return JU, JD, JDw
+end
+
+# One pass over the draws: s = E[S], dp = ∂s/∂ln p (m x m), dw = ∂s/∂ln w (m), and their
+# PATHWISE θ-Jacobians Js (m x vd), Jdp (m x m x vd), Jdw (m x vd) (B held fixed per draw).
+function _closed_form_pass(U, D, Dw, eps_full, JU, JD, JDw)
+    reps, m = size(eps_full); vd = size(JU, 2)
+    s = zeros(m); dp = zeros(m, m); dw = zeros(m)
+    Js = zeros(m, vd); Jdp = zeros(m, m, vd); Jdw = zeros(m, vd)
+    Sst = zeros(m); inB = falses(m); sumD = zeros(m); sumJD = zeros(m)
+    @inbounds for r in 1:reps
+        T = 0.0; sumDw = 0.0; fill!(sumD, 0.0)
+        for j in 1:m
+            Sst[j] = U[j] + eps_full[r, j]
+            inB[j] = Sst[j] > 0
+            if inB[j]
+                T += Sst[j]; sumDw += Dw[j]
+                for k in 1:m; sumD[k] += D[j, k]; end
+            end
+        end
+        for i in 1:m
+            inB[i] || continue
+            Si = Sst[i] / T
+            s[i] += Si
+            for k in 1:m; dp[i, k] += (D[i, k] - Si * sumD[k]) / T; end
+            dw[i] += (Dw[i] - Si * sumDw) / T
+        end
+        for q in 1:vd
+            dT = 0.0; sumJDw = 0.0; fill!(sumJD, 0.0)
+            for j in 1:m
+                inB[j] || continue
+                dT += JU[j, q]; sumJDw += JDw[j, q]
+                for k in 1:m; sumJD[k] += JD[j, k, q]; end
+            end
+            for i in 1:m
+                inB[i] || continue
+                Si = Sst[i] / T
+                dSi = (JU[i, q] - Si * dT) / T                     # ∂S_i/∂θ_q
+                Js[i, q] += dSi
+                for k in 1:m
+                    g = (D[i, k] - Si * sumD[k]) / T
+                    Jdp[i, k, q] += (JD[i, k, q] - dSi * sumD[k] - Si * sumJD[k]) / T - g * dT / T
+                end
+                gw = (Dw[i] - Si * sumDw) / T
+                Jdw[i, q] += (JDw[i, q] - dSi * sumDw - Si * sumJDw) / T - gw * dT / T
+            end
+        end
+    end
+    return s ./ reps, dp ./ reps, dw ./ reps, Js ./ reps, Jdp ./ reps, Jdw ./ reps
+end
+
+# Boundary part of ∂dp/∂θ (m x m x vd) and ∂dw/∂θ (m x vd): for each good j, the density f_j of
+# S*_j at zero times the mean over the draws projected onto {S*_j = 0} of the jump of the integrand
+# when j enters B (D_jk/T for i = j, −S_i D_jk/T for i ∈ B), times ∂U_j/∂θ.
+function _boundary_terms(U, D, Dw, eps_full, Sigma, JU)
+    reps, m = size(eps_full); vd = size(JU, 2)
+    # Covariance of the full ε (ε_m = −Σ_{j<m} ε_j): C = [Σ  −Σ1; −1'Σ  1'Σ1]
+    C = zeros(m, m)
+    C[1:m-1, 1:m-1] = Sigma
+    C[1:m-1, m] = -vec(sum(Sigma, dims = 2)); C[m, 1:m-1] = C[1:m-1, m]; C[m, m] = sum(Sigma)
+    BTp = zeros(m, m, vd); BTw = zeros(m, vd)
+    A = zeros(m, m); Aw = zeros(m); Sst = zeros(m)
+    for j in 1:m
+        ω2 = C[j, j]
+        fj = exp(-0.5 * U[j]^2 / ω2) / sqrt(2π * ω2)          # density of S*_j at 0
+        fill!(A, 0.0); fill!(Aw, 0.0)
+        @inbounds for r in 1:reps
+            shift = (eps_full[r, j] + U[j]) / ω2              # Gaussian projection onto S*_j = 0
+            T = 0.0
+            for l in 1:m
+                Sst[l] = U[l] + eps_full[r, l] - C[l, j] * shift
+                (l != j && Sst[l] > 0) && (T += Sst[l])
+            end
+            for i in 1:m
+                fac = i == j ? 1.0 / T : (Sst[i] > 0 ? -(Sst[i] / T) / T : 0.0)
+                fac == 0.0 && continue
+                for k in 1:m; A[i, k] += fac * D[j, k]; end
+                Aw[i] += fac * Dw[j]
+            end
+        end
+        for q in 1:vd, i in 1:m
+            c = fj * JU[j, q] / reps
+            for k in 1:m; BTp[i, k, q] += c * A[i, k]; end
+            BTw[i, q] += c * Aw[i]
+        end
+    end
+    return BTp, BTw
+end
+
+# Closed-form elasticities at the setup `st` (see _elasticity_setup): returns
+# (E, se, s, G) with E the m x (m+1) Marshallian price + income matrix, se its delta-method SEs
+# under V = vcov[1:vd,1:vd], s = E[S], and G the m x (m+1) x vd gradient of E in θ.
+# `se = false` skips the gradient (G empty, se = NaN).
+function _closed_form_elasticity(st, vcov; quaids::Bool, symmetry::Bool, se::Bool = true)
+    (; m, has_dems, price_index, muPrices, muBudget, muDemogs, muShares, params_model, vd, Sigma, eps_full) = st
+    kw = (quaids = quaids, has_dems = has_dems, price_index = price_index, mu_shares = muShares)
+    nq = se ? vd : 0
+    U, D, Dw = _latent_derivs(muPrices, muBudget, muDemogs, params_model; kw...)
+    JU, JD, JDw = _latent_jacobians(muPrices, muBudget, muDemogs, params_model; vd = nq, kw...)
+    s, dp, dw, Js, Jdp, Jdw = _closed_form_pass(U, D, Dw, eps_full, JU, JD, JDw)
+    E = hcat(dp ./ s .- I(m), dw ./ s .+ 1)               # m x (m+1)
+    se || return E, fill(NaN, m, m + 1), s, zeros(m, m + 1, 0)
+    BTp, BTw = _boundary_terms(U, D, Dw, eps_full, Sigma, JU)
+    G = zeros(m, m + 1, vd)
+    for q in 1:vd, i in 1:m
+        for k in 1:m
+            G[i, k, q] = (Jdp[i, k, q] + BTp[i, k, q]) / s[i] - dp[i, k] * Js[i, q] / s[i]^2
+        end
+        G[i, m + 1, q] = (Jdw[i, q] + BTw[i, q]) / s[i] - dw[i] * Js[i, q] / s[i]^2
+    end
+    if symmetry
+        # Chain rule through the (smooth, deterministic) symmetrization map by a central
+        # directional difference along each parameter's (∂E/∂θ_q, ∂s/∂θ_q).
+        h = 1e-6
+        for q in 1:vd
+            G[:, :, q] = (_symmetrize_marshallian(E .+ h .* G[:, :, q], s .+ h .* Js[:, q]) .-
+                          _symmetrize_marshallian(E .- h .* G[:, :, q], s .- h .* Js[:, q])) ./ (2h)
+        end
+        E = _symmetrize_marshallian(E, s)
+    end
+    V = Matrix{Float64}(vcov)[1:vd, 1:vd]
+    sem = Matrix{Float64}(undef, m, m + 1)
+    for i in 1:m, c in 1:(m + 1)
+        g = vec(G[i, c, :])
+        sem[i, c] = sqrt(max(dot(g, V * g), 0.0))
+    end
+    return E, sem, s, G
 end

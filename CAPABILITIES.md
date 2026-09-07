@@ -17,7 +17,7 @@ households are handled via the Wales–Woodland likelihood.
 | `aids_shares(prices, budget, params; …)` | AIDS/QUAIDS predicted budget shares |
 | `censored_loglike(shares, prices, budget, params; …)` | Wales–Woodland per-household censored log-likelihood |
 | `estimate(shares, prices, budget; …)` | Maximum-likelihood estimation (→ params, vcov, se, diagnostics) |
-| `censored_elasticity(prices, budget, params; …)` | Simulation-based price/income elasticities + delta-method SEs |
+| `censored_elasticity(prices, budget, params; …)` | Simulation-based price/income elasticities + delta-method SEs. `method = :finite_difference` (default, R algorithm) or `:closed_form` — exact derivative of the expected observed share on the same draws (one pass, no step size; Engel/Cournot/homogeneity exact), SEs from the exact parameter gradient (pathwise + regime-boundary term) with `vcov[1:vd,1:vd]` as the sampling variance (not divided by n, unlike the R path) |
 | `initial_values(shares, prices, budget; …)` | Principled LA-AIDS starting values |
 | `check_start(start, shares, prices, budget; …)` | Starting-value appropriateness check (Σ PD, finite ll, counts) |
 | `simulate_prices` / `simulate_data(n, params, spec; …)` | Simulate a censored dataset from known coefficients (the model's own DGP) |

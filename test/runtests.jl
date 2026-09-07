@@ -198,6 +198,80 @@ end
         @test all(isfinite, res.se)
     end
 
+    @testset "M3 — closed-form elasticities (method = :closed_form)" begin
+        edir   = joinpath(FIX, "elast")
+        params = vec(readdlm(joinpath(FIX, "params_loglike.csv"), ',', header = true)[1])
+        VCOV   = readdlm(joinpath(edir, "vcov.csv"), ',')
+        EPS    = readdlm(joinpath(edir, "epsilons.csv"), ',')
+        td, h  = readcsv(joinpath(FIX, "testing_data.csv"))
+        scol(name) = Float64.(td[:, findfirst(==(name), h)])
+        S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
+        kw = (quaids = true, demographics = Z, vcov = VCOV, reps = size(EPS, 1), epsilons = EPS)
+
+        fd = censored_elasticity(P, b, params; kw...)
+        cf = censored_elasticity(P, b, params; kw..., method = :closed_form)
+        @test cf isa ElasticityResult
+        # Same draws, same Amemiya–Tobin map: expected shares agree to roundoff, and the
+        # finite-difference elasticities (Δ = 1e-5 in levels) sit O(Δ) from the exact derivative.
+        @test maximum(abs.(cf.e_uobs .- fd.e_uobs)) < 1e-12
+        @test maximum(abs.(cf.elasticities .- fd.elasticities)) < 1e-4
+        @test all(isfinite, cf.se)
+        # Engel, Cournot and homogeneity hold draw by draw for the closed form → exact.
+        E = cf.elasticities; w = cf.e_uobs
+        @test abs(sum(w .* E[:, 5]) - 1) < 1e-12
+        @test maximum(abs.([sum(w .* E[:, jj]) + w[jj] for jj in 1:4])) < 1e-12
+        @test maximum(abs.([sum(E[i, 1:4]) + E[i, 5] for i in 1:4])) < 1e-10
+        @test_throws ErrorException censored_elasticity(P, b, params; kw..., method = :bogus)
+
+        # Latent means at the evaluation point are aids_shares at that point.
+        st = CensoredDemand._elasticity_setup(P, b, params; demographics = Z, point = mean,
+                                              reps = 200_000, epsilons = nothing,
+                                              rng = MersenneTwister(1), price_index = :translog,
+                                              shares = nothing)
+        U, D, Dw = CensoredDemand._latent_derivs(st.muPrices, st.muBudget, st.muDemogs,
+                                                 st.params_model; quaids = true, has_dems = true,
+                                                 price_index = :translog, mu_shares = nothing)
+        Ua = CensoredDemand._mu_shares(st.muPrices, st.muBudget, st.muDemogs, st.params_model;
+                                       quaids = true, has_dems = true)
+        @test maximum(abs.(U .- Ua)) < 1e-12
+        @test maximum(abs.(vec(sum(D, dims = 2)) .+ Dw)) < 1e-12     # latent homogeneity
+
+        # Delta-method gradient (pathwise + regime-boundary term) vs a central difference of
+        # the closed-form elasticities in θ (relative step 1e-2) on 200,000 fresh draws.
+        # Without the boundary term the relative error is ≈ 0.9 (Nava 2026, Table 4).
+        _, _, _, G = CensoredDemand._closed_form_elasticity(st, VCOV; quaids = true, symmetry = false)
+        f(pm) = CensoredDemand._closed_form_elasticity(merge(st, (params_model = pm,)), VCOV;
+                                                       quaids = true, symmetry = false, se = false)[1]
+        Gfd = similar(G)
+        for q in 1:st.vd
+            hq = 1e-2 * max(1.0, abs(st.params_model[q]))
+            pp = copy(st.params_model)
+            pp[q] += hq;  Ep = f(pp)
+            pp[q] -= 2hq; Em = f(pp)
+            Gfd[:, :, q] = (Ep .- Em) ./ (2hq)
+        end
+        @test norm(Gfd - G) / norm(G) < 0.06
+
+        # Slutsky symmetry, Stone index and AIDS/no-demographics paths.
+        cs = censored_elasticity(P, b, params; kw..., method = :closed_form, symmetry = true)
+        Es = cs.elasticities; ws = cs.e_uobs
+        slut = [ws[i] * (Es[i, j] + ws[j] * Es[i, 5]) - ws[j] * (Es[j, i] + ws[i] * Es[j, 5])
+                for i in 1:4, j in 1:4]
+        @test maximum(abs.(slut)) < 1e-12
+        @test all(isfinite, cs.se)
+        fst = censored_elasticity(P, b, params; kw..., price_index = :stone, shares = S)
+        cst = censored_elasticity(P, b, params; kw..., price_index = :stone, shares = S,
+                                  method = :closed_form)
+        @test maximum(abs.(cst.elasticities .- fst.elasticities)) < 1e-4
+        iv2 = initial_values(S, P, b; quaids = false, demographics = nothing)
+        Vi  = Matrix(1.0I, length(iv2), length(iv2))
+        fa = censored_elasticity(P, b, iv2; quaids = false, vcov = Vi, reps = 20_000)
+        ca = censored_elasticity(P, b, iv2; quaids = false, vcov = Vi, reps = 20_000,
+                                 method = :closed_form)
+        @test maximum(abs.(ca.elasticities .- fa.elasticities)) < 1e-4
+        @test all(isfinite, ca.se)
+    end
+
     @testset "M3 — estimate() machinery (smoke)" begin
         td, h = readcsv(joinpath(FIX, "testing_data.csv"))
         scol(name) = Float64.(td[:, findfirst(==(name), h)])

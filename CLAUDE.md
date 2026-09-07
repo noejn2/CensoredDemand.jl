@@ -70,7 +70,11 @@ judge-panel that validated each port.
   to quantify the cost of ignoring censoring.
 - `elasticities.jl` — `censored_elasticity`: simulation-based price/income elasticities with
   delta-method SEs; optional Slutsky `symmetry=true` (min-distance symmetrization). Accepts an
-  `epsilons` kwarg to inject draws for near-deterministic validation.
+  `epsilons` kwarg to inject draws for near-deterministic validation. `method=:closed_form`
+  replaces the finite differences by the exact derivative of the expected observed share on the
+  same draws (one pass, Nava 2026 closed-form note) and its SEs by the exact parameter gradient
+  (pathwise + regime-boundary term); the shared setup lives in `_elasticity_setup`, the parameter
+  unpacking in `shares.jl`'s `_unpack_params`.
 - `start.jl` — `initial_values` (principled LA-AIDS start, the default) + `check_start`.
 - `estimate.jl` — `estimate`: the MLE driver. **BHHH / Gauss–Newton is the sole optimizer**
   (per-observation scores); covariance is the OPG estimator `(SᵀS)⁻¹`. Returns
@@ -88,6 +92,7 @@ judge-panel that validated each port.
 | `floor_mode` | `:additive_r`/`:guard` | additive_r = verbatim R floor; guard = honest `log(max(x,1e-300))` |
 | `fd_mode` | `:central`/`:forward` | forward ≈ 2× faster/iter; final score + vcov always central |
 | `symmetry` | `false`/`true` | (elasticity only) impose Slutsky symmetry exactly |
+| `method` | `:finite_difference`/`:closed_form` | (elasticity only) R finite differences vs exact derivative on the same draws; closed-form SEs use `vcov[1:vd,1:vd]` as is (the R path divides by n) |
 | `parallel` + `-t N` | `true`/`false` | threaded per-household loop, bit-identical to serial |
 | `start`, `check` | vector / bool | default start = `initial_values`, validated by `check_start` |
 

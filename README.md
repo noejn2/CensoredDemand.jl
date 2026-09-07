@@ -42,6 +42,13 @@ el = censored_elasticity(prices, budget, res.params;
                          symmetry = true)
 elasticity_table(el)      # → tidy DataFrame
 
+# method = :closed_form evaluates the exact derivative of the expected observed share on the
+# same draws (one pass, no step size) with exact-gradient delta-method SEs; the default
+# :finite_difference is the R algorithm (see CAPABILITIES.md).
+el2 = censored_elasticity(prices, budget, res.params;
+                          quaids = true, demographics = Z, vcov = res.vcov,
+                          method = :closed_form)
+
 # Simulate from known coefficients and verify the estimator recovers them.
 spec = res.spec
 mc = montecarlo(500, res.params, spec; reps = 20)   # bias / RMSE / SE-coverage
