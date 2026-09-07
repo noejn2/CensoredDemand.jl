@@ -60,7 +60,7 @@ Options accept either a `Symbol` (`:translog`) or the matching `@enum` (`TRANSLO
 ## Correctness
 
 Two gates, both green: **R golden-fixture parity** (shares ~1e-16, censored log-likelihood at R's own
-integer tolerance, elasticities ~2e-8) **and** microeconomic theory identities (Engel / Cournot /
+integer tolerance, elasticity expected shares ~3e-16) **and** microeconomic theory identities (Engel / Cournot /
 homogeneity; Slutsky symmetry exactly imposable via `symmetry=true`). The estimator is also verified
 **consistent under its own data-generating process** via the simulation/Monte-Carlo recovery study.
 

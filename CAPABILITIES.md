@@ -51,7 +51,7 @@ arguments accept either a `Symbol` or the matching `@enum` value.
 |---|---|---|
 | Share equations | vs R `qshares` + 12-case multi-mode oracle | **exact to ~1e-16**; 2 independent ports agreed |
 | Censored log-likelihood | vs R `loglikes` (integer-sum gate; deterministic regimes) | sum **−4512** (R's own gate); det. regimes **1e-14**; 3 ports bit-identical |
-| Elasticities | vs R injected-ε oracle | **~2e-8** (elasticities), **3e-16** (expected shares) |
+| Elasticities | expected shares vs R injected-ε oracle | **3e-16** (expected shares); Amemiya–Tobin adding-up 1e-8. Point estimates/SEs are **not** R-parity-checked — the sign fix in `0b3ab5d` intentionally departs from `censoredAIDS::censoredElasticity` |
 | Theory identities | Engel / Cournot / homogeneity | hold to **~1e-6** (Slutsky symmetry ~0.105 by default — see findings) |
 | **Slutsky symmetry option** | `symmetry=true` (translog & stone) | Slutsky residual **< 1e-10**; other identities still hold; default byte-identical |
 | **Types & enums** | enum vs Symbol; struct field names | **byte-identical** results; structs are drop-in for callers |

@@ -1,5 +1,5 @@
 {
-  "description": "R elasticity oracle for validating a Julia port of censoredAIDS::censoredElasticity (SSB 4-good QUAIDS).",
+  "description": "R elasticity oracle for validating a Julia port of censoredAIDS::censoredElasticity (SSB 4-good QUAIDS). Only e_uobs_R.csv is still checked: elasticities_R.csv and se_R.csv were deleted after 0b3ab5d fixed the finite-difference sign that R carries wrong.",
   "model": "QUAIDS",
   "m": 4,
   "n_demographics": 4,
@@ -16,16 +16,15 @@
   "demographic_order_note": "MODEL order is [age,size,educ,sex]; the raw testing_data.csv column order is [age,size,sex,educ]. muDemogs and the theta params both follow the MODEL order.",
   "good_order": ["SSB", "Juice", "Milk", "Water"],
   "params": "33-length params_loglike.csv; first 27 are model params (alpha[3], beta[3], gamma[6], theta[12], lambda[3]) passed to muaidsCalculate; last 6 are the sigma block used to build Sigma.",
-  "elasticities_layout": {
+  "elasticities_layout (retired; describes the deleted elasticities_R.csv, kept as a layout note for censored_elasticity output)": {
     "shape": "4 x 5",
     "rows": "quantity i in good order [SSB,Juice,Milk,Water] (uncompensated own/cross response of quantity i)",
     "cols": ["Price SSB", "Price Juice", "Price Milk", "Price Water", "Income"],
     "note": "Columns 1..m are price elasticities (own-price on the diagonal, with the identity correction etas[1:m,1:m]-diag(1,m) already applied); column m+1 is the income/expenditure elasticity. Matrix is returned transposed so rows index quantities."
   },
-  "se_layout": "Same 4 x 5 shape and same row/col ordering as elasticities_R.csv; delta-method standard errors using vcov[1:27,1:27]/n.",
   "e_uobs_layout": "length m = 4 column vector, good order [SSB,Juice,Milk,Water]; mean of Amemiya-Tobin-corrected observed shares over reps draws.",
   "mu_inputs_layout": "name,value rows: muPrice_{SSB,Juice,Milk,Water}, muBudget, muDemog_{age,size,educ,sex} (the column means actually used as the evaluation point).",
-  "files": ["epsilons.csv", "vcov.csv", "elasticities_R.csv", "e_uobs_R.csv", "se_R.csv", "mu_inputs.csv", "meta.json"],
+  "files": ["epsilons.csv", "vcov.csv", "e_uobs_R.csv", "mu_inputs.csv", "meta.json"],
   "R_version": "R version 4.5.3 (2026-03-11)",
   "mvtnorm_version": "1.4.0"
 }

@@ -98,7 +98,9 @@ Every option accepts a `Symbol` *or* the matching `@enum` value.
 Two gates must stay green; both run in `test/runtests.jl` against committed CSV fixtures in
 `test/fixtures/` (generated from R; no runtime R dep):
 1. **R golden-fixture parity** — shares ~1e-16, censored log-likelihood at R's own integer
-   tolerance (sum −4512), elasticities ~2e-8.
+   tolerance (sum −4512), elasticity expected shares ~3e-16. Elasticity point estimates and SEs
+   are deliberately **not** R-parity-checked: `0b3ab5d` fixed the finite-difference sign, which R
+   carries wrong, so the old `elasticities_R.csv` / `se_R.csv` fixtures were deleted.
 2. **Microeconomic theory identities** — Engel / Cournot / homogeneity; Slutsky symmetry
    exactly imposable via `symmetry=true`.
 
