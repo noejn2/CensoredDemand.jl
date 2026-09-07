@@ -35,6 +35,7 @@ households are handled via the Wales–Woodland likelihood.
 | **Model** | `quaids = false\|true` | all | AIDS (linear) vs QUAIDS (quadratic) |
 | **Demographics** | `demographics = nothing\|n×t` | all | translate expenditure inside the deflator |
 | **Price index** | `price_index = :translog\|:stone` (or `TRANSLOG`/`STONE`) | shares/loglike/estimate/elasticity | `:translog` = full QUAIDS (R-faithful); `:stone` = LA-AIDS, limits nonlinearity |
+| **Jacobian** | `jacobian = true\|false` | loglike/estimate | `true` (default) = partial regimes carry the share-renormalisation Jacobian `T^(k-1)` (proper density, MLE); `false` = original GAUSS/R objective without it |
 | **Likelihood floor** | `floor_mode = :additive_r\|:guard` (or enum) | loglike/estimate | `:additive_r` = verbatim R floor; `:guard` = honest `log(max(p,1e-300))` |
 | **Optimizer** | BHHH (sole algorithm) | estimate | gradient-based Gauss–Newton + OPG covariance; Nelder-Mead / Optim.jl removed |
 | **FD score mode** | `fd_mode = :central\|:forward` | estimate | `:forward` ≈ 2× faster per iteration; final score + vcov always central |
@@ -61,6 +62,14 @@ arguments accept either a `Symbol` or the matching `@enum` value.
 | Initial values / packing | round-trip + transposition control | packing **provably exact** (1.8e-12; broken-θ control diverges 7609) |
 
 ## 4. Key findings
+
+- **The original likelihood omits a Jacobian.** For `1 < k < m` purchased goods the observed shares are
+  latent shares divided by `T = 1 − Σ(unbought latent shares)`; the change of variables carries `T^(k−1)`,
+  which Appendix D / the GAUSS script / the R port drop. Total-probability test at the paper's `(U, Σ)`:
+  corrected likelihood 1.00, original 0.33 (regimes `k = 1` and `k = m` are exact in both). On the full
+  ENIGH-2018 sample (61,599 households) the corrected MLE moves the error variances from
+  σ₁₁ = 0.93 to 2.60 and, e.g., the SSB own-price elasticity from −0.61 to −0.55. Default is now
+  `jacobian = true`; the findings below about the published estimates refer to the original objective.
 
 - **The published estimates are NOT the likelihood maximum.** Gradient ≈ 51,793 at the published
   params; a crude LA-AIDS start already scores **−2765.5 vs −4511.7** (beats the paper's "MLE" by

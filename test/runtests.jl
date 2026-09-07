@@ -1,6 +1,7 @@
 using Test
 using CensoredDemand
 using DelimitedFiles
+using Random: MersenneTwister
 using LinearAlgebra
 using Statistics
 using Distributions: Normal, logpdf, logcdf   # only these — `using Distributions` clobbers `estimate`
@@ -68,7 +69,9 @@ end
         llR = vec(readdlm(joinpath(FIX, "loglikes.csv"), ',', header = true)[1])
         nu  = vec(Int.(round.(readdlm(joinpath(FIX, "regimes.csv"), ',', header = true)[1])))
 
-        ll = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
+        # R parity is a property of the ORIGINAL (no-Jacobian) objective → jacobian = false here.
+        ll = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000,
+                              jacobian = false)
         @test length(ll) == 615
 
         # R's own gate: integer-rounded total log-likelihood matches (R sum ≈ -4511.661).
@@ -84,13 +87,99 @@ end
         @test abs(sum(ll) - sum(llR)) < 0.05
 
         # Seeded determinism: same default seed → identical result.
-        ll2 = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
+        ll2 = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000,
+                               jacobian = false)
         @test ll == ll2
 
         # Parallelization toggle: the serial path is bit-identical to the threaded one.
         ll_serial = censored_loglike(S, P, b, params; quaids = true, demographics = Z,
-                                     mc_points = 4000, parallel = false)
+                                     mc_points = 4000, parallel = false, jacobian = false)
         @test ll_serial == ll
+        # Default (Jacobian) path: deterministic, threaded == serial, and it differs from the
+        # legacy objective only in the partial regimes (nu ∈ {2,3}).
+        llJ  = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000)
+        llJs = censored_loglike(S, P, b, params; quaids = true, demographics = Z, mc_points = 4000,
+                                parallel = false)
+        @test llJ == llJs
+        @test maximum(abs.(llJ[full] .- ll[full])) < 1e-10
+        @test maximum(abs.(llJ[nu .== 1] .- ll[nu .== 1])) < 0.05       # QMC noise only
+        @test minimum(abs.(llJ[nu .== 2] .- ll[nu .== 2])) > 1e-6
+    end
+
+
+    @testset "Jacobian — partial-regime likelihood is a proper density" begin
+        # (a) _trunc_moment vs brute-force Monte Carlo on random (μ, Ω).
+        rng = MersenneTwister(7)
+        for (d, p) in ((1, 2), (1, 4), (2, 1), (2, 3), (3, 2))
+            A = randn(rng, d, d); Om = A * A' + 0.3 * I; mu = 0.4 .* randn(rng, d)
+            Lc = cholesky(Symmetric(Om)).L
+            N = 2_000_000; acc = 0.0
+            for _ in 1:N
+                y = mu .+ Lc * randn(rng, d)
+                all(y .<= 0) && (acc += (1 - sum(y))^p)
+            end
+            ref = acc / N
+            val = CensoredDemand._trunc_moment(mu, Om, p, 20_000, MersenneTwister(1))
+            tol = (d == 1 || (d == 2 && p == 1)) ? 3e-3 * ref + 1e-4 : 0.03 * ref + 1e-4
+            @test abs(val - ref) < tol
+        end
+
+        # (b) Total probability: at fixed (U, Σ) the likelihood integrated over the observed-share
+        #     space of every purchase pattern must equal the simulated pattern frequency.
+        function mass_check(m, U, Sig; jacobian, Ni = 3000, Nmc = 400_000, mc = 1000)
+            Rch = cholesky(Symmetric(Sig)).U
+            nsh = 2 * (m - 1) + (m - 1) * m ÷ 2 + (m - 1)          # α β γ λ (quaids, no dems)
+            θ = zeros(nsh + (m - 1) * m ÷ 2)
+            θ[1:m-1] = U[1:m-1]
+            k = 1
+            for jj in 1:m-1, ii in 1:jj
+                θ[nsh + k] = Rch[ii, jj]; k += 1
+            end
+            r2 = MersenneTwister(11); Lc = cholesky(Symmetric(Sig)).L
+            freq = Dict{Vector{Bool},Int}()
+            for _ in 1:Nmc
+                e = Lc * randn(r2, m - 1); s = vcat(U[1:m-1] .+ e, U[m] - sum(e))
+                pat = s .> 0; freq[pat] = get(freq, pat, 0) + 1
+            end
+            pats = collect(keys(freq))
+            rows = Float64[]; lab = Int[]
+            for (ip, pat) in enumerate(pats)
+                idx = findall(pat); kk = length(idx)
+                if kk == 1
+                    s = zeros(m); s[idx[1]] = 1.0; append!(rows, s); push!(lab, ip)
+                else
+                    for _ in 1:Ni
+                        g = -log.(rand(r2, kk)); g ./= sum(g); s = zeros(m); s[idx] .= g
+                        append!(rows, s); push!(lab, ip)
+                    end
+                end
+            end
+            Smat = permutedims(reshape(rows, m, :))
+            n = size(Smat, 1)
+            ll = censored_loglike(Smat, zeros(n, m), zeros(n), θ; quaids = true, mc_points = mc,
+                                  floor_mode = :guard, jacobian = jacobian)
+            worst = 0.0; total = 0.0
+            for (ip, pat) in enumerate(pats)
+                idx = findall(==(ip), lab); kk = count(pat)
+                mass = kk == 1 ? exp(ll[idx[1]]) : mean(exp.(ll[idx])) / factorial(kk - 1)
+                total += mass
+                worst = max(worst, abs(mass - freq[pat] / Nmc))
+            end
+            return total, worst
+        end
+        U4 = [0.45, 0.10, 0.30, 0.15]
+        S4 = [0.24 -0.04 -0.13; -0.04 0.21 -0.04; -0.13 -0.04 0.25]
+        tot, worst = mass_check(4, U4, S4; jacobian = true)
+        @test abs(tot - 1) < 0.02
+        @test worst < 0.01
+        tot0, _ = mass_check(4, U4, S4; jacobian = false)
+        @test tot0 < 0.5                       # the legacy objective is not a density
+        # m = 5 exercises the QMC moment branch (d = 2, p = 2 and d = 3, p = 1).
+        U5 = [0.35, 0.10, 0.25, 0.15, 0.15]
+        S5 = [0.20 -0.03 -0.08 -0.02; -0.03 0.15 -0.03 -0.02; -0.08 -0.03 0.20 -0.03; -0.02 -0.02 -0.03 0.12]
+        tot5, worst5 = mass_check(5, U5, S5; jacobian = true, Ni = 1500, Nmc = 300_000, mc = 1000)
+        @test abs(tot5 - 1) < 0.03
+        @test worst5 < 0.012
     end
 
     @testset "M3 — elasticities (censored_elasticity)" begin
@@ -162,10 +251,10 @@ end
             S = hcat(scol("s1"), scol("s2"), scol("s3"), scol("s4"))
 
             ll_default = censored_loglike(S, P, b, params; quaids = true,
-                                          demographics = Z, mc_points = 4000)
+                                          demographics = Z, mc_points = 4000, jacobian = false)
             ll_guard   = censored_loglike(S, P, b, params; quaids = true,
                                           demographics = Z, mc_points = 4000,
-                                          floor_mode = :guard)
+                                          floor_mode = :guard, jacobian = false)
             # Default (:additive_r) = verbatim R floor → integer-sum parity preserved.
             @test round(sum(ll_default)) == -4512
             # :guard removes the spurious additive credit (~279 nats) the floor handed to the
@@ -193,8 +282,8 @@ end
 
         # The principled start already beats the published "MLE" on the likelihood
         # (independent confirmation that the published params are NOT the argmax).
-        ll_iv  = sum(censored_loglike(S, P, b, iv;  quaids = true, demographics = Z, mc_points = 2000))
-        ll_pub = sum(censored_loglike(S, P, b, pub; quaids = true, demographics = Z, mc_points = 2000))
+        ll_iv  = sum(censored_loglike(S, P, b, iv;  quaids = true, demographics = Z, mc_points = 2000, jacobian = false))
+        ll_pub = sum(censored_loglike(S, P, b, pub; quaids = true, demographics = Z, mc_points = 2000, jacobian = false))
         @test ll_iv > ll_pub
 
         # AIDS, no-demographics mode also yields a valid start.

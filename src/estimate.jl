@@ -229,6 +229,9 @@ finite-difference score is clean.
                    stage via `sy_stage1` or let it be computed internally), or `:naive_censored`
                    (per-equation Tobit — treats zeros as censored latent demand, no reallocation).
                    The two `naive*` options are the misspecified estimators the MC study compares.
+- `jacobian`     : `true` (default) — the partial-purchase regimes carry the Wales–Woodland
+                   renormalisation Jacobian T^(k−1) (proper density → maximum likelihood);
+                   `false` — the original GAUSS/R objective without it (see `censored_loglike`).
 - `maxiters`     : maximum BHHH iterations.
 - `g_tol`        : convergence tolerance — the mean |gradient|-per-observation threshold.
 - `fd_step`      : relative finite-difference step for the per-observation scores.
@@ -262,6 +265,7 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
                   check::Bool = true,
                   price_index = :translog,
                   loglike::Symbol = :censored,
+                  jacobian::Bool = true,
                   free = nothing,
                   sy_stage1 = nothing,
                   share_names = nothing, demographic_names = nothing)
@@ -302,7 +306,8 @@ function estimate(shares::AbstractMatrix, prices::AbstractMatrix,
         theta -> censored_loglike(shares, P, budget, theta;
                                   quaids = quaids, demographics = demographics,
                                   mc_points = mc_points, floor_mode = floor_mode,
-                                  parallel = parallel, price_index = price_index)
+                                  parallel = parallel, price_index = price_index,
+                                  jacobian = jacobian)
     end
 
     # --- starting values: principled LA-AIDS start; verify viability before optimizing ---

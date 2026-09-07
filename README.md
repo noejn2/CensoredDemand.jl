@@ -59,10 +59,22 @@ Options accept either a `Symbol` (`:translog`) or the matching `@enum` (`TRANSLO
 
 ## Correctness
 
-Two gates, both green: **R golden-fixture parity** (shares ~1e-16, censored log-likelihood at R's own
-integer tolerance, elasticity expected shares ~3e-16) **and** microeconomic theory identities (Engel / Cournot /
-homogeneity; Slutsky symmetry exactly imposable via `symmetry=true`). The estimator is also verified
-**consistent under its own data-generating process** via the simulation/Monte-Carlo recovery study.
+**Jacobian correction (default).** For a household buying `k` of the `m` goods the observed shares are the
+positive latent shares divided by their sum `T`. That renormalisation has Jacobian `T^(k-1)`, which the
+original GAUSS/R likelihood (Appendix D of Nava & Dong 2022) omits in every partial regime `1 < k < m`;
+its partial-regime terms are therefore not densities (they integrate to ≈0.33 instead of 1 at the paper's
+parameters) and its maximizer is not the MLE. `censored_loglike` / `estimate` now include the factor by
+default (`jacobian = true`): closed forms for `m = 4`, a truncated-moment recursion for one unbought good,
+quasi-Monte-Carlo otherwise. `jacobian = false` reproduces the original objective. Regimes `k = 1` and
+`k = m` are unchanged.
+
+Gates: **R golden-fixture parity of the original objective** (`jacobian = false`: shares ~1e-16, censored
+log-likelihood at R's own integer tolerance, elasticity expected shares ~3e-16), **total-probability tests of
+the corrected likelihood** (integrated over every purchase pattern it reproduces the simulated pattern
+frequencies; `_trunc_moment` is checked against brute-force Monte Carlo), **and** microeconomic theory
+identities (Engel / Cournot / homogeneity; Slutsky symmetry exactly imposable via `symmetry=true`). The
+estimator is also verified **consistent under its own data-generating process** via the
+simulation/Monte-Carlo recovery study.
 
 ## Testing
 
